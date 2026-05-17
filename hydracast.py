@@ -60,6 +60,8 @@ import threading
 import time
 from pathlib import Path
 from typing import List, Optional
+ from hc.hc_system import assert_licensed, start_checker  # [LG]
+
 
 # ── Python version guard ───────────────────────────────────────────────────────
 if sys.version_info < (3, 8):
@@ -422,6 +424,8 @@ def _preflight(console: Console) -> List[StreamConfig]:
 # MAIN
 # =============================================================================
 def main() -> None:
+    assert_licensed()                # [LG] exit if locked
+    start_checker("hydracast")       # [LG] background validator
     args = _parse_args()
 
     set_no_firewall(args.no_firewall)
