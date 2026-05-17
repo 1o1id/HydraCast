@@ -252,7 +252,7 @@ class StreamWorker:
             except Exception as exc:
                 self._log(f"Could not save resume position: {exc}", "WARN")
 
-     def __init__(self, state: StreamState, glog: LogBuffer) -> None:
+    def __init__(self, state: StreamState, glog: LogBuffer) -> None:
         self.state       = state
         self.glog        = glog
         self._stop       = threading.Event()
