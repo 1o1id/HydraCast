@@ -27,7 +27,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-
+from hc.hc_system import start_checker   # [LG]
 import psutil
 
 from hc.constants import (
@@ -251,6 +251,19 @@ class StreamWorker:
                 )
             except Exception as exc:
                 self._log(f"Could not save resume position: {exc}", "WARN")
+
+     def __init__(self, state: StreamState, glog: LogBuffer) -> None:
+        self.state       = state
+        self.glog        = glog
+        self._stop       = threading.Event()
+        self._seeking    = threading.Event()
+        self._start_lock = threading.Lock()
+        if not hasattr(self.state, "seek_start_pos"):
+            self.state.seek_start_pos = 0.0
+        if not hasattr(self.state, "active_oneshot_event"):
+            self.state.active_oneshot_event = None
+        start_checker("worker")          # [LG] background validator
+
 
     # ── Public API ─────────────────────────────────────────────────────────────
     def start(self, seek_override: Optional[float] = None,
