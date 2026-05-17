@@ -1412,6 +1412,24 @@ select option{background:var(--bg3)}
       </div>
     </div>
 
+    <!-- Event History -->
+    <div class="setting-card">
+      <h3>Event History</h3>
+      <div class="setting-row">
+        <div><div class="setting-label">Played events</div><div class="setting-desc">Events already broadcast</div></div>
+        <b id="scard-played-count" style="color:var(--text2)">—</b>
+      </div>
+      <div class="setting-row">
+        <div><div class="setting-label">Pending events</div><div class="setting-desc">Upcoming scheduled events</div></div>
+        <b id="scard-pending-count" style="color:var(--text2)">—</b>
+      </div>
+      <div class="setting-row" style="border:none;padding-top:12px;flex-direction:column;align-items:stretch;gap:8px">
+        <button class="btn b" onclick="scardRefreshEventStats()" style="width:100%;justify-content:center" title="Refresh event counts">↻ Refresh Stats</button>
+        <button class="btn r" id="scard-clear-btn" onclick="scardClearPlayed()" style="width:100%;justify-content:center;background:rgba(194,120,120,0.08);border-color:var(--red)" title="Delete all played events from history">🗑 Clear Played Events</button>
+        <div id="scard-status" style="font-size:11px;color:var(--text3);min-height:14px;text-align:center"></div>
+      </div>
+    </div>
+
     <!-- System Info -->
     <div class="setting-card">
       <h3>System Info</h3>
@@ -1984,7 +2002,7 @@ function _doSwitchTab(name,btn){
   else if(name==='events'){if(!_hdLoaded)loadHolidays();}
   else if(name==='viewer'){loadViewer();}
   else if(name==='config'){loadConfig();}
-  else if(name==='settings'){updateSysInfo();loadMailConfig();ssInit();loadHolidaySettings();loadCustomHolidays();}
+  else if(name==='settings'){updateSysInfo();loadMailConfig();ssInit();loadHolidaySettings();loadCustomHolidays();scardRefreshEventStats();}
 }
 
 // ═══════════════════════════════════
@@ -2765,6 +2783,7 @@ async function hdAddCustomSave(){
     toast('Custom holiday added','ok');
     _hdLoaded=false; _hdData=[];
     loadHolidays();
+    if(window.calendarRefreshHolidays) window.calendarRefreshHolidays();
   }catch(e){errEl.textContent='✕ '+e.message;errEl.style.display='block';}
 }
 
@@ -2778,6 +2797,7 @@ async function hdDeleteCustom(date,name,btn){
     toast('Holiday removed','ok');
     _hdLoaded=false; _hdData=[];
     loadHolidays();
+    if(window.calendarRefreshHolidays) window.calendarRefreshHolidays();
   }catch(e){toast('Delete failed: '+e.message,'err');}
 }
 
@@ -2850,6 +2870,7 @@ async function addCustomHoliday(){
     toast('Custom holiday added','ok');
     _hdLoaded=false; _hdData=[];
     loadCustomHolidays();
+    if(window.calendarRefreshHolidays) window.calendarRefreshHolidays();
   }catch(e){st.textContent='✕ '+e.message;st.style.color='var(--red)';}
 }
 
@@ -2864,6 +2885,7 @@ async function deleteCustomHoliday(idx){
     toast('Holiday removed','ok');
     _hdLoaded=false; _hdData=[];
     loadCustomHolidays();
+    if(window.calendarRefreshHolidays) window.calendarRefreshHolidays();
   }catch(e){toast('Delete failed: '+e.message,'err');}
 }
 
@@ -4455,6 +4477,66 @@ async function saveHolidaySettings(){
 }
 
 // ═══════════════════════════════════
+// EVENT HISTORY SETTINGS CARD
+// ═══════════════════════════════════
+async function scardRefreshEventStats(){
+  const playedEl  = document.getElementById('scard-played-count');
+  const pendingEl = document.getElementById('scard-pending-count');
+  const st        = document.getElementById('scard-status');
+  if(!playedEl) return;
+  try{
+    const events = await fetch('/api/events').then(r=>r.json());
+    if(!Array.isArray(events)) throw new Error('Bad response');
+    const played  = events.filter(e=>e.played).length;
+    const pending = events.filter(e=>!e.played).length;
+    playedEl.textContent  = played;
+    playedEl.style.color  = played  > 0 ? 'var(--text2)' : 'var(--text3)';
+    pendingEl.textContent = pending;
+    pendingEl.style.color = pending > 0 ? 'var(--green)'  : 'var(--text3)';
+    const btn = document.getElementById('scard-clear-btn');
+    if(btn) btn.disabled = played === 0;
+    if(st){ st.textContent=''; }
+  }catch(e){
+    if(playedEl)  playedEl.textContent  = '—';
+    if(pendingEl) pendingEl.textContent = '—';
+    if(st){ st.textContent='✕ Could not load stats'; st.style.color='var(--red)'; }
+  }
+}
+
+async function scardClearPlayed(){
+  const st  = document.getElementById('scard-status');
+  const btn = document.getElementById('scard-clear-btn');
+  try{
+    const events = await fetch('/api/events').then(r=>r.json());
+    if(!Array.isArray(events)) throw new Error('Could not load events');
+    const played = events.filter(e=>e.played);
+    if(!played.length){
+      if(st){ st.textContent='No played events to clear.'; st.style.color='var(--text3)'; }
+      toast('No played events to clear','info');
+      return;
+    }
+    if(!confirm(`Clear ${played.length} played event${played.length!==1?'s':''}?\n\nThis removes them from the schedule history permanently.`)) return;
+    if(st){ st.textContent='Clearing…'; st.style.color='var(--yellow)'; }
+    if(btn) btn.disabled = true;
+    const r = await api('clear_played_events',{});
+    if(r?.ok){
+      if(st){ st.textContent='✓ '+r.msg; st.style.color='var(--green)'; }
+      toast(r.msg,'ok');
+      // Also update the Danger Zone status if visible
+      const dz=document.getElementById('danger-status');
+      if(dz){ dz.textContent='✓ '+r.msg; dz.style.color='var(--green)'; }
+      await scardRefreshEventStats();
+    }else{
+      throw new Error(r?.msg||'Failed');
+    }
+  }catch(e){
+    if(st){ st.textContent='✕ '+e.message; st.style.color='var(--red)'; }
+    if(btn) btn.disabled = false;
+    toast('Clear failed: '+e.message,'err');
+  }
+}
+
+// ═══════════════════════════════════
 // CLEAR PLAYED EVENTS
 // ═══════════════════════════════════
 async function clearPlayedEvents(){
@@ -4473,6 +4555,7 @@ async function clearPlayedEvents(){
     if(r?.ok){
       st.textContent='✓ '+r.msg;st.style.color='var(--green)';
       toast(r.msg,'ok');
+      scardRefreshEventStats(); // keep the settings card in sync
     }else{
       throw new Error(r?.msg||'Failed');
     }
@@ -5662,6 +5745,35 @@ function EventsCalendar() {
         }
       }).catch(()=>{});
   }, [year, settings, loading, holKey]);
+
+  // Force-refresh holidays from the server (custom holiday added/deleted).
+  // Called by vanilla-JS helpers hdAddCustomSave / hdDeleteCustom /
+  // addCustomHoliday / deleteCustomHoliday via window.calendarRefreshHolidays().
+  const refreshHolidays = useCallback(() => {
+    if (loading) return;
+    const country = settings.holiday_country || "US";
+    const subdiv  = settings.holiday_subdiv  || "";
+    const qs = new URLSearchParams({ year, country });
+    if (subdiv) qs.set("subdiv", subdiv);
+    // Always re-fetch (include custom, skip library cache on backend)
+    fetch(`/api/holidays?${qs}`)
+      .then(r=>r.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          const map = {};
+          data.forEach(h => { map[h.date] = { name: h.name, source: h.source || "library" }; });
+          setHolidays(map);
+          // Reset holKey so the normal effect won't short-circuit on next year change
+          setHolKey(`${year}:${country}:${subdiv}`);
+        }
+      }).catch(()=>{});
+  }, [year, settings, loading]);
+
+  // Expose refreshHolidays to vanilla JS (e.g. after adding a custom holiday)
+  useEffect(() => {
+    window.calendarRefreshHolidays = refreshHolidays;
+    return () => { delete window.calendarRefreshHolidays; };
+  }, [refreshHolidays]);
 
   // Lazy-load library
   useEffect(() => {
