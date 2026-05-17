@@ -182,25 +182,18 @@ class _CalendarHandlersMixin:
     # ------------------------------------------------------------------
     # POST /api/holidays/custom  — add a custom holiday
     # ------------------------------------------------------------------
-    def _post_holidays_custom(self, body) -> None:
+    def _post_holidays_custom(self, body: bytes) -> None:
         """
         Add a user-defined holiday.
         Body: {"date": "YYYY-MM-DD", "name": "...", "country": "XX"}
         country is optional (defaults to "CUSTOM").
-
-        Accepts either raw bytes (called from do_POST via PUT/DELETE routes)
-        or an already-parsed dict (called from _dispatch with the shared
-        ``data`` object so we avoid double-decoding).
         """
         from hc.web_holiday_store import add_custom
         try:
-            if isinstance(body, (bytes, bytearray)):
-                payload = json.loads(body.decode("utf-8"))
-            else:
-                payload = body  # already a dict
-            date    = str(payload.get("date",    "")).strip()
-            name    = str(payload.get("name",    "")).strip()
-            country = str(payload.get("country", "CUSTOM")).strip()
+            payload = json.loads(body.decode("utf-8"))
+            date    = payload.get("date",    "").strip()
+            name    = payload.get("name",    "").strip()
+            country = payload.get("country", "CUSTOM").strip()
             if not date or not name:
                 raise ValueError("'date' and 'name' are required.")
             entry = add_custom(date=date, name=name, country=country)
@@ -362,6 +355,8 @@ class _CalendarHandlersMixin:
         except (TypeError, ValueError):
             loop_count = 0
 
+        comment: str = str(payload.get("comment", "")).strip()[:500]
+
         broadcast_end: Optional[datetime] = None
         be_str = payload.get("broadcast_end", "")
         if be_str:
@@ -407,6 +402,13 @@ class _CalendarHandlersMixin:
                     broadcast_end = broadcast_end,
                     loop_count    = loop_count,
                 )
+                # Attach comment if provided (attribute may not exist on older models)
+                if comment:
+                    try:
+                        ev.comment = comment
+                        JSONManager._save_events(mgr.events)
+                    except AttributeError:
+                        pass
                 ev_dict: Dict[str, Any] = {
                     "event_id":    ev.event_id,
                     "stream_name": ev.stream_name,
