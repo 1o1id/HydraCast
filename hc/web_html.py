@@ -1432,11 +1432,74 @@ select option{background:var(--bg3)}
         Use the two-letter ISO country code (e.g. <code style="color:var(--accent-light)">US</code>, <code style="color:var(--accent-light)">BD</code>, <code style="color:var(--accent-light)">GB</code>, <code style="color:var(--accent-light)">AU</code>).
         Requires the <code style="color:var(--accent-light)">holidays</code> Python package.
       </div>
-      <div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(180px,1fr));margin-bottom:12px">
+      <div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));margin-bottom:12px">
         <div class="fg">
-          <label>Country Code</label>
-          <input id="hol-country" placeholder="US" maxlength="3" style="text-transform:uppercase"
-            title="Two-letter ISO country code, e.g. US, BD, GB, AU, DE, IN">
+          <label>Country</label>
+          <select id="hol-country" title="Select the country for public holiday display in the Events calendar">
+            <option value="AE">AE — UAE</option>
+            <option value="AR">AR — Argentina</option>
+            <option value="AT">AT — Austria</option>
+            <option value="AU">AU — Australia</option>
+            <option value="BD">BD — Bangladesh</option>
+            <option value="BE">BE — Belgium</option>
+            <option value="BR">BR — Brazil</option>
+            <option value="CA">CA — Canada</option>
+            <option value="CH">CH — Switzerland</option>
+            <option value="CN">CN — China</option>
+            <option value="CO">CO — Colombia</option>
+            <option value="CZ">CZ — Czech Republic</option>
+            <option value="DE">DE — Germany</option>
+            <option value="DK">DK — Denmark</option>
+            <option value="EG">EG — Egypt</option>
+            <option value="ES">ES — Spain</option>
+            <option value="FI">FI — Finland</option>
+            <option value="FR">FR — France</option>
+            <option value="GB">GB — United Kingdom</option>
+            <option value="GH">GH — Ghana</option>
+            <option value="GR">GR — Greece</option>
+            <option value="HU">HU — Hungary</option>
+            <option value="ID">ID — Indonesia</option>
+            <option value="IE">IE — Ireland</option>
+            <option value="IL">IL — Israel</option>
+            <option value="IN">IN — India</option>
+            <option value="IQ">IQ — Iraq</option>
+            <option value="IR">IR — Iran</option>
+            <option value="IT">IT — Italy</option>
+            <option value="JP">JP — Japan</option>
+            <option value="KE">KE — Kenya</option>
+            <option value="KR">KR — South Korea</option>
+            <option value="KW">KW — Kuwait</option>
+            <option value="LK">LK — Sri Lanka</option>
+            <option value="MA">MA — Morocco</option>
+            <option value="MX">MX — Mexico</option>
+            <option value="MY">MY — Malaysia</option>
+            <option value="NG">NG — Nigeria</option>
+            <option value="NL">NL — Netherlands</option>
+            <option value="NO">NO — Norway</option>
+            <option value="NP">NP — Nepal</option>
+            <option value="NZ">NZ — New Zealand</option>
+            <option value="OM">OM — Oman</option>
+            <option value="PH">PH — Philippines</option>
+            <option value="PK">PK — Pakistan</option>
+            <option value="PL">PL — Poland</option>
+            <option value="PT">PT — Portugal</option>
+            <option value="QA">QA — Qatar</option>
+            <option value="RO">RO — Romania</option>
+            <option value="RU">RU — Russia</option>
+            <option value="SA">SA — Saudi Arabia</option>
+            <option value="SE">SE — Sweden</option>
+            <option value="SG">SG — Singapore</option>
+            <option value="TH">TH — Thailand</option>
+            <option value="TN">TN — Tunisia</option>
+            <option value="TR">TR — Turkey</option>
+            <option value="TZ">TZ — Tanzania</option>
+            <option value="UA">UA — Ukraine</option>
+            <option value="UG">UG — Uganda</option>
+            <option value="US" selected>US — United States</option>
+            <option value="VN">VN — Vietnam</option>
+            <option value="ZA">ZA — South Africa</option>
+            <option value="ZW">ZW — Zimbabwe</option>
+          </select>
         </div>
         <div class="fg">
           <label>State / Province <span style="font-weight:400;color:var(--text3)">optional</span></label>
@@ -4112,12 +4175,11 @@ async function loadHolidaySettings(){
 }
 
 async function saveHolidaySettings(){
-  const country=(document.getElementById('hol-country')?.value||'').trim().toUpperCase();
+  const country=(document.getElementById('hol-country')?.value||'').trim();
   const subdiv=(document.getElementById('hol-subdiv')?.value||'').trim()||null;
   const st=document.getElementById('hol-status');
-  if(!country||country.length<2){
-    st.textContent='✕ Enter a valid country code (e.g. US, BD, GB)';
-    st.style.color='var(--red)';return;
+  if(!country){
+    st.textContent='✕ Select a country';st.style.color='var(--red)';return;
   }
   st.textContent='Saving…';st.style.color='var(--yellow)';
   try{
@@ -5676,15 +5738,6 @@ function EventsCalendar() {
               Schedule {selDates.size} date{selDates.size!==1?"s":""}
             </button>
           )}
-
-          {/* Holiday country indicator — edit in Settings tab */}
-          <span title="Holiday country — change in Settings tab"
-            style={{display:"flex",alignItems:"center",gap:"5px",fontSize:"11px",padding:"4px 9px",
-              borderRadius:"var(--border-radius-md)",border:"0.5px solid var(--color-border-tertiary)",
-              color:"var(--color-text-secondary)",userSelect:"none"}}>
-            <i className="ti ti-world" style={{fontSize:"13px"}}/>
-            {settings.holiday_country || "US"}
-          </span>
         </div>
       </div>
 
