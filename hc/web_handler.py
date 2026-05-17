@@ -565,7 +565,7 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
         result = []
         for ev in sorted(mgr.events, key=lambda e: e.play_at):
             diff = (ev.play_at - now).total_seconds()
-            entry = {
+            entry: Dict[str, Any] = {
                 "event_id":      ev.event_id,
                 "stream_name":   ev.stream_name,
                 "file_name":     ev.file_path.name,
@@ -573,15 +573,13 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                 "play_at":       ev.play_at.strftime("%Y-%m-%d %H:%M:%S"),
                 "play_at_iso":   ev.play_at.isoformat(),
                 "seconds_until": round(diff),
-                # ── safe reads for optional / model-version-dependent fields ──
-                "post_action":   getattr(ev, "post_action", "resume"),
-                "start_pos":     getattr(ev, "start_pos",   "00:00:00") or "00:00:00",
-                "end_pos":       getattr(ev, "end_pos",     ""),
-                "loop_count":    getattr(ev, "loop_count",  0),
-                "comment":       getattr(ev, "comment",     "") or "",
+                "post_action":   getattr(ev, "post_action",  "resume") or "resume",
+                "start_pos":     getattr(ev, "start_pos",    "00:00:00") or "00:00:00",
+                "end_pos":       getattr(ev, "end_pos",      ""),
+                "loop_count":    getattr(ev, "loop_count",   0),
+                "comment":       getattr(ev, "comment",      "") or "",
                 "played":        ev.played,
             }
-            # broadcast_end is optional — only include when present
             be = getattr(ev, "broadcast_end", None)
             if be is not None:
                 entry["broadcast_end"] = be.isoformat()
