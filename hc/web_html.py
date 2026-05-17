@@ -1065,12 +1065,12 @@ select option{background:var(--bg3)}
     <!-- ── Holidays pill ── -->
     <div style="position:relative" id="hd-wrap">
       <button class="stat-pill" id="hd-btn" onclick="toggleHolidays(event)"
-          title="Bangladesh Public Holidays"
+          title="Public Holidays"
           style="cursor:pointer;user-select:none;border-color:rgba(154,138,176,0.35)">
         🗓&nbsp;<b id="hd-next-label" style="color:var(--purple)">Holidays</b>
       </button>
       <div class="hd-popup" id="hd-popup" style="display:none">
-        <div class="hd-popup-hdr">🇧🇩 Bangladesh Holidays &nbsp;<span id="hd-year" style="color:var(--accent-light)"></span></div>
+        <div class="hd-popup-hdr" id="hd-popup-hdr">🗓 Holidays &nbsp;<span id="hd-year" style="color:var(--accent-light)"></span></div>
         <div id="hd-list"><div style="padding:14px;text-align:center;color:var(--text3);font-size:12px">Loading…</div></div>
       </div>
     </div>
@@ -2583,27 +2583,70 @@ document.addEventListener('click', e=>{
   }
 });
 
+// Country code → flag emoji
+function _countryFlag(cc){
+  if(!cc||cc.length!==2) return '🗓';
+  return String.fromCodePoint(...cc.toUpperCase().split('').map(c=>c.charCodeAt(0)+127397));
+}
+
+// Country names lookup (mirrors COUNTRIES in the React block)
+const _COUNTRY_NAMES={
+  AE:"UAE",AR:"Argentina",AT:"Austria",AU:"Australia",BD:"Bangladesh",
+  BE:"Belgium",BR:"Brazil",CA:"Canada",CH:"Switzerland",CN:"China",
+  CO:"Colombia",CZ:"Czech Republic",DE:"Germany",DK:"Denmark",EG:"Egypt",
+  ES:"Spain",FI:"Finland",FR:"France",GB:"United Kingdom",GH:"Ghana",
+  GR:"Greece",HU:"Hungary",ID:"Indonesia",IE:"Ireland",IL:"Israel",
+  IN:"India",IQ:"Iraq",IR:"Iran",IT:"Italy",JP:"Japan",KE:"Kenya",
+  KR:"South Korea",KW:"Kuwait",LK:"Sri Lanka",MA:"Morocco",MX:"Mexico",
+  MY:"Malaysia",NG:"Nigeria",NL:"Netherlands",NO:"Norway",NP:"Nepal",
+  NZ:"New Zealand",OM:"Oman",PH:"Philippines",PK:"Pakistan",PL:"Poland",
+  PT:"Portugal",QA:"Qatar",RO:"Romania",RU:"Russia",SA:"Saudi Arabia",
+  SE:"Sweden",SG:"Singapore",TH:"Thailand",TN:"Tunisia",TR:"Turkey",
+  TZ:"Tanzania",UA:"Ukraine",UG:"Uganda",US:"United States",VN:"Vietnam",
+  ZA:"South Africa",ZW:"Zimbabwe",
+};
+
 async function loadHolidays(){
   try{
-    const data = await fetch('/api/holidays').then(r=>r.json());
-    if(!Array.isArray(data)){ throw new Error('bad response'); }
-    _hdData = data;
+    // Fetch current country from settings first
+    const settings = await fetch('/api/settings').then(r=>r.json()).catch(()=>({}));
+    const country  = (settings.holiday_country||'US').toUpperCase();
+    const subdiv   = settings.holiday_subdiv||null;
+    const countryName = _COUNTRY_NAMES[country]||country;
+    const flag     = _countryFlag(country);
+    const yr       = new Date().getFullYear();
+
+    // Update pill title and popup header
+    const btn = document.getElementById('hd-btn');
+    if(btn) btn.title = `${countryName} Public Holidays`;
+    const hdr = document.getElementById('hd-popup-hdr');
+    if(hdr) hdr.innerHTML = `${flag} ${countryName} Holidays &nbsp;<span id="hd-year" style="color:var(--accent-light)">${yr}</span>`;
+
+    // Build query
+    let url = `/api/holidays?year=${yr}&country=${country}`;
+    if(subdiv) url += `&subdiv=${encodeURIComponent(subdiv)}`;
+
+    const data = await fetch(url).then(r=>r.json());
+    if(!Array.isArray(data)){ throw new Error(data.error||'bad response'); }
+    _hdData   = data;
     _hdLoaded = true;
     const today = new Date().toISOString().slice(0,10);
-    const yr    = today.slice(0,4);
-    document.getElementById('hd-year').textContent = yr;
+
     // Set next upcoming holiday label in pill
     const upcoming = _hdData.filter(h=>h.date >= today);
     if(upcoming.length){
-      const next = upcoming[0];
-      const d = new Date(next.date + 'T00:00:00');
+      const next  = upcoming[0];
+      const d     = new Date(next.date + 'T00:00:00');
       const label = d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
       document.getElementById('hd-next-label').textContent = label;
+    } else {
+      document.getElementById('hd-next-label').textContent = countryName;
     }
+
     // Render list
     const list = document.getElementById('hd-list');
     if(!_hdData.length){
-      list.innerHTML='<div style="padding:14px;text-align:center;color:var(--text3);font-size:12px">No holiday data available</div>';
+      list.innerHTML='<div style="padding:14px;text-align:center;color:var(--text3);font-size:12px">No holiday data for '+esc(countryName)+'</div>';
       return;
     }
     list.innerHTML = _hdData.map(h=>{
@@ -2615,9 +2658,8 @@ async function loadHolidays(){
         ${isToday?'<div class="hd-today-tag">TODAY</div>':''}
       </div>`;
     }).join('');
-    // Holidays loaded — calendar removed
   }catch(e){
-    document.getElementById('hd-list').innerHTML = '<div style="padding:14px;color:var(--red);font-size:12px">⚠ Failed to load holidays. Ensure the <code>holidays</code> Python package is installed.</div>';
+    document.getElementById('hd-list').innerHTML = '<div style="padding:14px;color:var(--red);font-size:12px">⚠ '+esc(e.message||'Failed to load holidays')+'. Ensure the <code>holidays</code> Python package is installed.</div>';
   }
 }
 
@@ -4149,8 +4191,13 @@ async function doRestore(file){
       st.textContent='✓ Restored: '+restored+(failed.length?'\n⚠ Warnings: '+failed.join('; '):'')+' — reloading in 3 s…';
       st.style.color=failed.length?'var(--yellow)':'var(--green)';
       toast('Restore successful — restarting streams…','ok');
-      // Reload holiday inputs if app_settings were restored
-      if(j.restored&&j.restored.includes('app_settings')) loadHolidaySettings();
+      // Reload holiday inputs and pill if app_settings were restored
+      if(j.restored&&j.restored.includes('app_settings')){
+        loadHolidaySettings();
+        _hdLoaded=false; _hdData=[];
+        document.getElementById('hd-next-label').textContent='Holidays';
+        loadHolidays();
+      }
       setTimeout(()=>loadStreams(),3500);
     }else{
       throw new Error(j.msg||'Restore failed');
@@ -4192,6 +4239,11 @@ async function saveHolidaySettings(){
     st.textContent='✓ Saved — '+country+(subdiv?' / '+subdiv:'');
     st.style.color='var(--green)';
     toast('Holiday settings saved','ok');
+    // Invalidate holidays cache so pill + popup update to the new country
+    _hdLoaded=false;
+    _hdData=[];
+    document.getElementById('hd-next-label').textContent='Holidays';
+    loadHolidays();
   }catch(e){
     st.textContent='✕ '+e.message;st.style.color='var(--red)';
     toast('Save failed: '+e.message,'err');
@@ -5309,125 +5361,6 @@ function EditModal({ ev, streams, library, libraryLoading, todayStr, onClose, on
 }
 
 // ---------------------------------------------------------------------------
-// Settings modal
-// ---------------------------------------------------------------------------
-function SettingsModal({ settings, onSave, onClose }) {
-  const [form,   setForm]   = useState({ country: settings.holiday_country||"US", subdiv: settings.holiday_subdiv||"" });
-  const [query,  setQuery]  = useState("");
-  const [saving, setSaving] = useState(false);
-  const listRef = useRef(null);
-
-  const filtered = COUNTRIES.filter(c =>
-    c.name.toLowerCase().includes(query.toLowerCase()) ||
-    c.code.toLowerCase().includes(query.toLowerCase())
-  );
-  const selectedCountry = COUNTRIES.find(c => c.code === form.country);
-
-  useEffect(() => {
-    if (!listRef.current) return;
-    const el = listRef.current.querySelector("[data-selected='true']");
-    if (el) el.scrollIntoView({ block:"nearest" });
-  }, [form.country, query]);
-
-  const handleSelect = code => { setForm(f=>({...f,country:code})); setQuery(""); };
-  const save = async () => {
-    setSaving(true);
-    try { await onSave(form); } finally { setSaving(false); }
-  };
-
-  return (
-    <div style={{
-      background:"var(--color-background-primary)",
-      border:"0.5px solid var(--color-border-primary)",
-      borderRadius:"var(--border-radius-lg)",
-      width:"380px",boxShadow:"0 8px 32px rgba(0,0,0,0.22)",
-    }}>
-      <div style={{padding:"16px 20px",borderBottom:"0.5px solid var(--color-border-tertiary)",
-        display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <p style={{margin:0,fontSize:"15px",fontWeight:"500"}}>Holiday settings</p>
-        <button onClick={onClose} aria-label="Close"
-          style={{background:"none",border:"none",cursor:"pointer",
-            color:"var(--color-text-secondary)",fontSize:"20px",lineHeight:1,padding:"2px 6px"}}>×</button>
-      </div>
-      <div style={{padding:"18px 20px"}}>
-        <div style={{marginBottom:"14px"}}>
-          <label style={lbl}>Country</label>
-          {selectedCountry && (
-            <div style={{
-              display:"flex",alignItems:"center",gap:"6px",
-              padding:"6px 10px",marginBottom:"8px",
-              borderRadius:"var(--border-radius-md)",
-              background:"var(--color-background-info)",
-              border:"0.5px solid var(--color-border-info)",
-              fontSize:"13px",color:"var(--color-text-info)",fontWeight:"500",
-            }}>
-              <i className="ti ti-check" style={{fontSize:"12px",flexShrink:0}}/>
-              {selectedCountry.code} — {selectedCountry.name}
-            </div>
-          )}
-          <input placeholder="Search countries…" value={query}
-            onChange={e=>setQuery(e.target.value)}
-            style={{width:"100%",marginBottom:"6px"}} autoFocus/>
-          {filtered.length === 0 ? (
-            <div style={{padding:"16px",textAlign:"center",fontSize:"12px",
-              color:"var(--color-text-tertiary)",border:"0.5px solid var(--color-border-tertiary)",
-              borderRadius:"var(--border-radius-md)"}}>No countries match "{query}"</div>
-          ) : (
-            <div ref={listRef} style={{maxHeight:"180px",overflowY:"auto",
-              border:"0.5px solid var(--color-border-secondary)",
-              borderRadius:"var(--border-radius-md)"}}>
-              {filtered.map(c => {
-                const isSel = c.code === form.country;
-                return (
-                  <div key={c.code} data-selected={isSel?"true":"false"}
-                    onClick={()=>handleSelect(c.code)}
-                    style={{
-                      padding:"7px 12px",cursor:"pointer",fontSize:"13px",
-                      display:"flex",alignItems:"center",gap:"8px",
-                      background: isSel ? "var(--color-background-info)" : "transparent",
-                      color: isSel ? "var(--color-text-info)" : "var(--color-text-primary)",
-                      borderBottom:"0.5px solid var(--color-border-tertiary)",
-                    }}
-                    onMouseEnter={e=>{ if(!isSel)e.currentTarget.style.background="var(--color-background-secondary)"; }}
-                    onMouseLeave={e=>{ if(!isSel)e.currentTarget.style.background="transparent"; }}>
-                    <span style={{
-                      width:"14px",height:"14px",borderRadius:"3px",flexShrink:0,
-                      border:`0.5px solid ${isSel?"var(--color-border-info)":"var(--color-border-secondary)"}`,
-                      background:isSel?"var(--color-text-info)":"transparent",
-                      display:"flex",alignItems:"center",justifyContent:"center",
-                    }}>
-                      {isSel && <i className="ti ti-check" style={{fontSize:"10px",color:"#fff"}}/>}
-                    </span>
-                    <span style={{fontFamily:"var(--font-mono)",fontSize:"12px",
-                      color:isSel?"inherit":"var(--color-text-secondary)",flexShrink:0}}>{c.code}</span>
-                    <span>{c.name}</span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-        <div style={{marginBottom:"18px"}}>
-          <label style={lbl}>State / province <span style={{fontWeight:"400",color:"var(--color-text-tertiary)"}}>optional</span></label>
-          <input value={form.subdiv} onChange={e=>setForm(f=>({...f,subdiv:e.target.value}))}
-            placeholder="e.g. CA, NSW, ON…" style={{width:"100%"}}/>
-          <p style={{fontSize:"12px",color:"var(--color-text-tertiary)",margin:"6px 0 0"}}>
-            Leave blank for national holidays only.
-          </p>
-        </div>
-        <div style={{display:"flex",gap:"8px",justifyContent:"flex-end"}}>
-          <button onClick={onClose}>Cancel</button>
-          <button onClick={save} disabled={saving}
-            style={{background:"var(--color-text-info)",color:"#fff",border:"none",opacity:saving?0.65:1}}>
-            {saving ? "Saving…" : "Save settings"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Legend
 // ---------------------------------------------------------------------------
 function Legend() {
@@ -5611,20 +5544,6 @@ function EventsCalendar() {
     }
   };
 
-  const handleSaveSettings = async ({ country, subdiv }) => {
-    const res = await fetch("/api/settings", {
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ holiday_country: country, holiday_subdiv: subdiv||null }),
-    });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-    setSettings(data);
-    setHolKey("");
-    setModal(null);
-    showToast("Holiday settings saved");
-  };
-
   if (loading) return (
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"300px",
       fontSize:"14px",color:"var(--color-text-secondary)"}}>
@@ -5686,9 +5605,6 @@ function EventsCalendar() {
               onSave={refreshEvents}
               onDelete={async id=>{ await handleDelete(id); await refreshEvents(); }}
             />
-          )}
-          {modal==="settings" && (
-            <SettingsModal settings={settings} onSave={handleSaveSettings} onClose={()=>setModal(null)}/>
           )}
         </div>
       )}
