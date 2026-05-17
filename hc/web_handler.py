@@ -577,44 +577,14 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                 "start_pos":     ev.start_pos if hasattr(ev, "start_pos") else "00:00:00",
                 "end_pos":       ev.end_pos   if hasattr(ev, "end_pos")   else "",
                 "played":        ev.played,
-                "comment":       getattr(ev, "comment", "") or "",
             })
         self._json(result)
 
-    def _get_holidays(self, qs: Dict[str, Any]) -> None:
-        """Return public holidays for the requested year/country/subdiv."""
-        try:
-            import holidays as _hol
-        except ImportError:
-            log.warning("holidays package not installed — run: pip install holidays>=0.45")
-            self._json({"error": "The 'holidays' Python package is not installed. Run: pip install holidays"}, 500)
-            return
-
-        from hc.web_settings_manager import load_settings
-        settings = load_settings()
-
-        try:
-            year    = int(qs.get("year",    [datetime.now().year])[0])
-            country = qs.get("country", [settings.get("holiday_country", "US")])[0].upper()
-            subdiv_raw = qs.get("subdiv", [settings.get("holiday_subdiv") or ""])[0]
-            subdiv  = subdiv_raw if subdiv_raw and subdiv_raw.lower() != "null" else None
-        except (ValueError, IndexError) as exc:
-            self._json({"error": f"Bad query parameters: {exc}"}, 400)
-            return
-
-        try:
-            kwargs: Dict[str, Any] = {"years": year}
-            if subdiv:
-                kwargs["subdiv"] = subdiv
-            h = _hol.country_holidays(country, **kwargs)
-            result = [
-                {"date": str(date), "name": name, "country": country}
-                for date, name in sorted(h.items())
-            ]
-            self._json(result)
-        except Exception as exc:
-            log.error("_get_holidays: %s", exc)
-            self._json({"error": str(exc)}, 500)
+    # _get_holidays is intentionally NOT defined here.
+    # The implementation in _CalendarHandlersMixin (web_handlers_calendar.py)
+    # is the authoritative one: it merges library holidays with custom holidays
+    # from disk and uses a disk cache for offline/restart resilience.
+    # Defining it here again would shadow that version and break custom holidays.
 
     def _get_settings(self) -> None:
         """Return the persisted app settings (holiday_country, etc.)."""
@@ -997,7 +967,7 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                 start_pos   = str(data.get("start_pos",   "00:00:00")).strip()
                 end_pos     = str(data.get("end_pos",     "")).strip()
                 post_action = str(data.get("post_action", "resume")).strip()
-                notes       = str(data.get("notes", "")).strip()[:500]
+                notes       = str(data.get("notes", "")).strip()[:200]
                 if post_action not in ("resume", "stop", "black"):
                     post_action = "resume"
                 if not re.fullmatch(r"\d{1,2}:\d{2}:\d{2}", start_pos):
@@ -1042,11 +1012,6 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                         ev.end_pos = end_pos
                     except AttributeError:
                         pass
-                # Store optional comment/notes
-                try:
-                    ev.comment = notes
-                except AttributeError:
-                    pass
                 mgr.add_event(ev)
                 self._json({"ok": True, "msg": f"Event scheduled for {dt.strftime('%Y-%m-%d %H:%M')}"})
             except Exception as exc:
@@ -1101,11 +1066,6 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                     ev.start_pos = sp if re.fullmatch(r"\d{1,2}:\d{2}:\d{2}", sp) else "00:00:00"
                 if "loop_count" in data:
                     ev.loop_count = int(data["loop_count"])
-                if "comment" in data:
-                    try:
-                        ev.comment = str(data["comment"]).strip()[:500]
-                    except AttributeError:
-                        pass
                 JSONManager._save_events(mgr.events)
                 self._json({"ok": True, "msg": "Event updated"})
             except Exception as exc:
@@ -1443,9 +1403,7 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
 
         elif action == "holidays/custom":
             # POST /api/holidays/custom — add a user-defined holiday
-            # Pass the already-parsed dict; _post_holidays_custom accepts both
-            # bytes and dict so it works whether called from _dispatch or do_POST.
-            self._post_holidays_custom(data)
+            self._post_holidays_custom(raw)
 
         elif action == "settings":
             # POST /api/settings — persist holiday country / subdiv preference
@@ -1488,6 +1446,8 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                 except ValueError:
                     log.warning("events/bulk: invalid broadcast_end %r — ignored", be_str)
 
+            bulk_comment: str = str(data.get("comment", "")).strip()[:500]
+
             created = []
             errors  = []
             for item in streams_raw:
@@ -1510,6 +1470,12 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                         play_at       = play_at,
                         broadcast_end = broadcast_end,
                     )
+                    if bulk_comment:
+                        try:
+                            ev.comment = bulk_comment
+                            JSONManager._save_events(mgr.events)
+                        except AttributeError:
+                            pass
                     ev_dict = {
                         "event_id":    ev.event_id,
                         "stream_name": ev.stream_name,
