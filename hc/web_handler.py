@@ -577,6 +577,7 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                 "start_pos":     ev.start_pos if hasattr(ev, "start_pos") else "00:00:00",
                 "end_pos":       ev.end_pos   if hasattr(ev, "end_pos")   else "",
                 "played":        ev.played,
+                "comment":       getattr(ev, "comment", "") or "",
             })
         self._json(result)
 
@@ -996,7 +997,7 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                 start_pos   = str(data.get("start_pos",   "00:00:00")).strip()
                 end_pos     = str(data.get("end_pos",     "")).strip()
                 post_action = str(data.get("post_action", "resume")).strip()
-                notes       = str(data.get("notes", "")).strip()[:200]
+                notes       = str(data.get("notes", "")).strip()[:500]
                 if post_action not in ("resume", "stop", "black"):
                     post_action = "resume"
                 if not re.fullmatch(r"\d{1,2}:\d{2}:\d{2}", start_pos):
@@ -1041,6 +1042,11 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                         ev.end_pos = end_pos
                     except AttributeError:
                         pass
+                # Store optional comment/notes
+                try:
+                    ev.comment = notes
+                except AttributeError:
+                    pass
                 mgr.add_event(ev)
                 self._json({"ok": True, "msg": f"Event scheduled for {dt.strftime('%Y-%m-%d %H:%M')}"})
             except Exception as exc:
@@ -1095,6 +1101,11 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                     ev.start_pos = sp if re.fullmatch(r"\d{1,2}:\d{2}:\d{2}", sp) else "00:00:00"
                 if "loop_count" in data:
                     ev.loop_count = int(data["loop_count"])
+                if "comment" in data:
+                    try:
+                        ev.comment = str(data["comment"]).strip()[:500]
+                    except AttributeError:
+                        pass
                 JSONManager._save_events(mgr.events)
                 self._json({"ok": True, "msg": "Event updated"})
             except Exception as exc:
@@ -1432,7 +1443,9 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
 
         elif action == "holidays/custom":
             # POST /api/holidays/custom — add a user-defined holiday
-            self._post_holidays_custom(raw)
+            # Pass the already-parsed dict; _post_holidays_custom accepts both
+            # bytes and dict so it works whether called from _dispatch or do_POST.
+            self._post_holidays_custom(data)
 
         elif action == "settings":
             # POST /api/settings — persist holiday country / subdiv preference
