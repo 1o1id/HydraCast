@@ -1,21 +1,100 @@
-MIT License
+HYDRACAST SOFTWARE LICENSE
+Version 1.0 — 2025
 
-Copyright (c) 2026 MD Shourav Hossain
+Copyright (c) 2025  MD SHOURAV HOSSAIN
+All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. GRANT OF LICENSE
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+   Subject to the terms of this License, the copyright holder grants you a
+   limited, non-exclusive, non-transferable, revocable license to install and
+   use HydraCast ("the Software") solely for your personal or internal
+   business purposes.
+
+2. RESTRICTIONS
+
+   You may NOT:
+
+   a. Copy, distribute, sublicense, sell, or otherwise transfer the Software
+      or any rights in it to any third party.
+
+   b. Modify, adapt, translate, reverse-engineer, decompile, or disassemble
+      the Software, except to the limited extent permitted by applicable law.
+
+   c. Remove, obscure, or alter any proprietary notices, labels, or license
+      validation components embedded in the Software.
+
+   d. Use the Software for any unlawful purpose or in any way that violates
+      applicable local, national, or international law.
+
+3. LICENSE VALIDATION  ← please read
+
+   The Software includes an automated license-validation mechanism.  By
+   installing or using the Software you expressly consent to the following:
+
+   a. PERIODIC NETWORK CHECK
+      At randomised intervals (approximately every 1–15 minutes while the
+      Software is running) the Software contacts the following URL to verify
+      that this installation is authorised:
+
+        https://raw.githubusercontent.com/rhshourav/HydraCast
+            /****
+
+      No personally identifiable information is transmitted; the Software
+      only reads a short validation token from that URL.
+
+   b. FAILURE COUNTER
+      If the validation server is reachable but returns an unexpected token,
+      a failure is recorded locally.  Network errors (server unreachable,
+      no Internet connection) do NOT count as failures.
+
+   c. PERMANENT LOCK
+      After ten (10) confirmed validation failures the Software will write
+      a lock file to:
+
+        <your home directory>/.hydracast/installation.lock
+
+      Once locked, the Software will refuse to start and will display a
+      message directing you to the author.  The lock persists until the
+      author issues an unlock or you reinstall under a valid license.
+
+   d. RENEWAL
+      To renew or restore a locked installation contact the author at:
+
+        https://github.com/rhshourav/HydraCast
+
+4. OWNERSHIP
+
+   The Software is licensed, not sold.  The copyright holder retains all
+   right, title, and interest in and to the Software, including all
+   intellectual property rights.
+
+5. DISCLAIMER OF WARRANTIES
+
+   THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS
+   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+6. LIMITATION OF LIABILITY
+
+   IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY INDIRECT,
+   INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES ARISING OUT
+   OF OR IN CONNECTION WITH THE SOFTWARE OR THIS LICENSE, EVEN IF ADVISED
+   OF THE POSSIBILITY OF SUCH DAMAGES.
+
+7. TERMINATION
+
+   This License is effective until terminated.  It terminates automatically
+   if you breach any of its terms.  Upon termination you must cease all use
+   of the Software and destroy all copies in your possession.
+
+8. GOVERNING LAW
+
+   This License shall be governed by and construed in accordance with the
+   laws .
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+For licensing enquiries: https://github.com/rhshourav/HydraCast
