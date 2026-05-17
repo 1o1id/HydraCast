@@ -166,8 +166,9 @@ def _get_next_in_queue(st, cfg, n=2):
 # REQUEST HANDLER
 # =============================================================================
 from hc.web_filemanager import _FileManagerMixin   # provides _get_files, _handle_file_op
+from hc.web_handlers_calendar import _CalendarHandlersMixin
 
-class WebHandler(_FileManagerMixin, BaseHTTPRequestHandler):
+class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandler):
 
     def log_message(self, *args: Any) -> None:
         pass  # suppress default access log
