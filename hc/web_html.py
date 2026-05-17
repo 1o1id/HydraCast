@@ -108,6 +108,7 @@ _HTML = r"""
   --color-border-info:rgba(122,159,194,0.45);
   --color-border-success:rgba(107,142,107,0.45);
   --color-border-danger:rgba(194,120,120,0.45);
+  --border-radius-sm:6px;
   --border-radius-md:var(--radius);
   --border-radius-lg:var(--radius-lg);
 }
@@ -129,6 +130,7 @@ _HTML = r"""
   --color-border-info:rgba(74,106,138,0.4);
   --color-border-success:rgba(74,122,74,0.4);
   --color-border-danger:rgba(168,80,80,0.4);
+  --border-radius-sm:6px;
   --border-radius-md:var(--radius);
   --border-radius-lg:var(--radius-lg);
 }
@@ -5979,9 +5981,26 @@ function EventsCalendar() {
 // Mount once DOM is ready
 (function mountCalendar(){
   const root = document.getElementById('events-calendar-root');
-  if (root && window.ReactDOM) {
-    ReactDOM.createRoot(root).render(React.createElement(EventsCalendar));
+  if (!root || !window.ReactDOM) return;
+
+  class ErrorBoundary extends React.Component {
+    constructor(p) { super(p); this.state = { err: null }; }
+    static getDerivedStateFromError(e) { return { err: e }; }
+    render() {
+      if (this.state.err) return React.createElement('div', {
+        style: {
+          padding:'40px', textAlign:'center',
+          color:'var(--red)', fontSize:'13px', lineHeight:'1.6'
+        }
+      }, '\u26a0 Events calendar failed to load: ' + this.state.err.message);
+      return this.props.children;
+    }
   }
+
+  ReactDOM.createRoot(root).render(
+    React.createElement(ErrorBoundary, null,
+      React.createElement(EventsCalendar))
+  );
 })();
 </script>
 </body>
