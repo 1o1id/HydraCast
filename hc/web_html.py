@@ -5428,6 +5428,14 @@ function CreateModal({ dates, holidays, streams, library, libraryLoading, todayS
         </div>
 
         {err && (
+          <div style={{padding:"8px 12px",borderRadius:"var(--border-radius-md)",
+            background:"var(--color-background-danger)",border:"0.5px solid var(--color-border-danger)",
+            fontSize:"12px",color:"var(--color-text-danger)",marginBottom:"14px"}}>{err}</div>
+        )}
+
+        <div style={{display:"flex",gap:"8px",justifyContent:"flex-end",alignItems:"center"}}>
+          <button onClick={onClose}>Cancel</button>
+          <button onClick={submit} disabled={submitting||(hasPastDateTime&&sortedDates.length===1)}
             style={{background:"var(--color-text-info)",color:"#fff",border:"none",
               opacity:(submitting||(hasPastDateTime&&sortedDates.length===1))?0.55:1}}>
             {submitting ? "Scheduling…" : sortedDates.length > 1 ? `Schedule for ${sortedDates.filter(ds=>!isPastDateTime(ds,time,todayStr)).length} date(s)` : "Schedule event"}
