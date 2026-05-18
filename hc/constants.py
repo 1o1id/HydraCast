@@ -21,7 +21,7 @@ from typing import Dict, Optional
 
 # ── App metadata ──────────────────────────────────────────────────────────────
 APP_NAME   = "HydraCast"
-APP_VER    = "6.2.0"
+APP_VER    = "6.3.0"
 APP_AUTHOR = "rhshourav"
 APP_GITHUB = "https://github.com/rhshourav/HydraCast"
 
@@ -42,7 +42,6 @@ def set_base_dir(script_path: Path) -> None:
     _dirs["BASE"]    = base
     _dirs["BIN"]     = base / "bin"
     _dirs["CONFIG"]  = base / "config"
-    _dirs["CONFIGS"] = base / "configs"
     _dirs["LOGS"]    = base / "logs"
     _dirs["MEDIA"]   = base / "media"
     _dirs["SSL"]     = base / "ssl"
@@ -51,7 +50,7 @@ def set_base_dir(script_path: Path) -> None:
     # Legacy paths — migration helpers only
     _dirs["CSV"]        = base / "streams.csv"
     _dirs["EVENTS_CSV"] = base / "events.csv"
-    for key in ("BIN", "CONFIG", "CONFIGS", "LOGS", "MEDIA", "SSL"):
+    for key in ("BIN", "CONFIG", "LOGS", "MEDIA", "SSL"):
         _dirs[key].mkdir(parents=True, exist_ok=True)
 
 
