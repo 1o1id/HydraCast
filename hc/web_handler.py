@@ -273,6 +273,7 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
             "/api/system_stats":   self._get_system_stats,
             "/api/stream_detail":  lambda: self._get_stream_detail(qs),
             "/api/stream_view":    lambda: self._get_stream_view(qs),
+            "/api/check_port":     lambda: self._get_check_port(qs),
             "/api/urls_csv":               lambda: self._get_urls_csv(qs),
             "/api/mail_config":              self._get_mail_config,
             "/api/gmail_oauth2_status":      self._get_gmail_oauth2_status,
@@ -778,6 +779,253 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
         except Exception as exc:
             self._json({"status": "error", "error": str(exc), "token_exists": False})
 
+    def _get_check_port(self, qs: Dict[str, Any]) -> None:
+        """
+        GET /api/check_port?port=8555
+
+        Check whether a proposed RTSP base port is safe to use.
+
+        Validates:
+          1. Port is in range 1024–65534.
+          2. Port is ODD  (HydraCast convention: RTSP=odd, HLS=port+1=even).
+          3. All four derived ports are free from any existing process:
+               RTSP = port   HLS = port+1   RTP = port+2* (bumped even)
+               RTCP = RTP+1
+          4. Firewall rules do not appear to block the RTSP port
+             (Windows: netsh advfirewall; Linux: iptables / ufw).
+
+        Returns JSON:
+          {
+            "ok": true/false,      // overall safe to use
+            "port": 8555,
+            "hls_port": 8556,
+            "rtp_port": 8558,
+            "rtcp_port": 8559,
+            "odd_ok": true,        // port is odd
+            "ports": {             // per-port status
+              "8555": {"free": true,  "process": null},
+              "8556": {"free": false, "process": "nginx (pid 1234)"},
+              ...
+            },
+            "firewall": {
+              "checked": true,
+              "blocked": false,
+              "detail": "No blocking rule found"
+            },
+            "warnings": ["…"],     // non-fatal advisories
+            "errors":   ["…"]      // fatal blockers (ok=false)
+          }
+        """
+        import socket as _socket
+        import subprocess as _sp
+        import sys as _sys
+
+        try:
+            raw = qs.get("port", [""])[0].strip()
+            if not raw:
+                self._json({"ok": False, "errors": ["Port parameter is required"]})
+                return
+            port = int(raw)
+        except (ValueError, TypeError):
+            self._json({"ok": False, "errors": ["Port must be an integer"]})
+            return
+
+        errors: list   = []
+        warnings: list = []
+
+        # ── 1. Range check ────────────────────────────────────────────────────
+        if not (1024 <= port <= 65534):
+            self._json({"ok": False,
+                        "errors": [f"Port {port} is out of range (1024–65534)"]})
+            return
+
+        # ── 2. Odd check ──────────────────────────────────────────────────────
+        odd_ok = (port % 2 != 0)
+        if not odd_ok:
+            errors.append(
+                f"Port {port} is even. HydraCast requires an ODD RTSP base port "
+                f"(HLS will use the adjacent even port {port + 1})."
+            )
+
+        # Derive companion ports
+        hls_port  = port + 1
+        rtp_base  = port + 2
+        if rtp_base % 2 != 0:
+            rtp_base += 1
+        rtcp_port = rtp_base + 1
+
+        all_ports = {
+            port:      "RTSP",
+            hls_port:  "HLS",
+            rtp_base:  "RTP",
+            rtcp_port: "RTCP",
+        }
+
+        # ── 3. Process occupancy check ────────────────────────────────────────
+        def _process_on_port(p: int):
+            """Return 'name (pid NNN)' if any process holds TCP or UDP port p."""
+            try:
+                for conn in psutil.net_connections(kind="inet"):
+                    if conn.laddr and conn.laddr.port == p:
+                        pid = conn.pid
+                        if pid:
+                            try:
+                                proc = psutil.Process(pid)
+                                return f"{proc.name()} (pid {pid})"
+                            except psutil.NoSuchProcess:
+                                return f"pid {pid} (exited)"
+                        return "unknown process"
+            except Exception:
+                pass
+            return None
+
+        port_status: Dict[str, Any] = {}
+        for p, label in all_ports.items():
+            occupant = _process_on_port(p)
+            free     = (occupant is None)
+            port_status[str(p)] = {
+                "label":   label,
+                "free":    free,
+                "process": occupant,
+            }
+            if not free:
+                errors.append(
+                    f"{label} port {p} is already in use by {occupant}."
+                )
+
+        # ── 4. Firewall probe ─────────────────────────────────────────────────
+        firewall: Dict[str, Any] = {"checked": False, "blocked": False, "detail": ""}
+
+        try:
+            is_win   = _sys.platform.startswith("win")
+            is_linux = _sys.platform.startswith("linux")
+
+            if is_win:
+                # netsh advfirewall: list inbound rules that mention this port
+                r = _sp.run(
+                    ["netsh", "advfirewall", "firewall", "show", "rule",
+                     "name=all", "dir=in", "verbose"],
+                    capture_output=True, text=True, timeout=8,
+                )
+                out = r.stdout.lower()
+                port_str = str(port)
+                # Simple heuristic: look for a "block" rule that mentions our port
+                blocked = False
+                for line in out.splitlines():
+                    if port_str in line and "block" in line:
+                        blocked = True
+                        break
+                firewall = {
+                    "checked": True,
+                    "blocked": blocked,
+                    "detail":  (
+                        f"Windows Firewall: blocking inbound rule found for port {port}."
+                        if blocked else
+                        "Windows Firewall: no explicit blocking rule found for this port."
+                    ),
+                }
+                if blocked:
+                    warnings.append(
+                        f"Windows Firewall may block inbound traffic on port {port}. "
+                        "Add an Allow rule or disable the block rule."
+                    )
+
+            elif is_linux:
+                # Try ufw first, then iptables
+                ufw_ok = False
+                try:
+                    r2 = _sp.run(
+                        ["ufw", "status", "verbose"],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    if r2.returncode == 0:
+                        out2 = r2.stdout.lower()
+                        ufw_ok = True
+                        # If ufw is active and port is not listed as ALLOW
+                        if "status: active" in out2:
+                            allowed = str(port) in out2 and "allow" in out2
+                            # Coarse check: if port not mentioned at all, may be blocked
+                            port_mentioned = str(port) in out2
+                            if not port_mentioned:
+                                warnings.append(
+                                    f"ufw is active but port {port} has no explicit ALLOW rule. "
+                                    "Add with: sudo ufw allow {port}/tcp".format(port=port)
+                                )
+                            firewall = {
+                                "checked": True,
+                                "blocked": False,
+                                "detail":  (
+                                    f"ufw is active; port {port} appears allowed."
+                                    if port_mentioned else
+                                    f"ufw is active; no ALLOW rule found for port {port}."
+                                ),
+                            }
+                except FileNotFoundError:
+                    pass
+
+                if not ufw_ok:
+                    # Fall back to iptables -L
+                    try:
+                        r3 = _sp.run(
+                            ["iptables", "-L", "INPUT", "-n", "--line-numbers"],
+                            capture_output=True, text=True, timeout=5,
+                        )
+                        out3 = r3.stdout.lower()
+                        drop_or_reject = (
+                            f"dpt:{port}" in out3
+                            and ("drop" in out3 or "reject" in out3)
+                        )
+                        firewall = {
+                            "checked": True,
+                            "blocked": drop_or_reject,
+                            "detail":  (
+                                f"iptables: DROP/REJECT rule found for port {port}."
+                                if drop_or_reject else
+                                f"iptables: no DROP/REJECT rule found for port {port}."
+                            ),
+                        }
+                        if drop_or_reject:
+                            warnings.append(
+                                f"iptables has a DROP/REJECT rule for port {port}. "
+                                "Run: sudo iptables -I INPUT -p tcp --dport {p} -j ACCEPT"
+                                .format(p=port)
+                            )
+                    except Exception:
+                        firewall = {
+                            "checked": False,
+                            "blocked": False,
+                            "detail":  "iptables check failed (permission denied or not installed).",
+                        }
+            else:
+                firewall = {
+                    "checked": False,
+                    "blocked": False,
+                    "detail":  "Firewall check not supported on this OS.",
+                }
+        except Exception as exc:
+            firewall = {
+                "checked": False,
+                "blocked": False,
+                "detail":  f"Firewall check error: {exc}",
+            }
+
+        if firewall.get("blocked"):
+            errors.append(firewall["detail"])
+
+        ok = len(errors) == 0
+        self._json({
+            "ok":        ok,
+            "port":      port,
+            "hls_port":  hls_port,
+            "rtp_port":  rtp_base,
+            "rtcp_port": rtcp_port,
+            "odd_ok":    odd_ok,
+            "ports":     port_status,
+            "firewall":  firewall,
+            "warnings":  warnings,
+            "errors":    errors,
+        })
+
     def _get_upload_status(self, qs: Dict[str, Any]) -> None:
         """GET /api/upload/status?session_id=X  — chunked upload progress + resume info."""
         from hc.web_upload import handle_upload_status
@@ -881,8 +1129,13 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                 cfg = st.config
                 # Port
                 new_port = int(data.get("port", cfg.port))
-                if not (1024 <= new_port <= 65535):
-                    raise ValueError(f"Port {new_port} out of range")
+                if not (1024 <= new_port <= 65534):
+                    raise ValueError(f"Port {new_port} out of range (1024–65534)")
+                if new_port % 2 == 0:
+                    raise ValueError(
+                        f"Port {new_port} is even. HydraCast requires an ODD RTSP port "
+                        f"(HLS will use port {new_port + 1})."
+                    )
                 cfg.port = new_port
                 # Stream path
                 sp = str(data.get("stream_path", cfg.stream_path)).strip()
@@ -1148,8 +1401,14 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                         "spaces, hyphens, dots and underscores."
                     )
                 port = int(data.get("port", 0))
-                if not (1024 <= port <= 65535):
-                    raise ValueError(f"Port {port} out of range (1024-65535).")
+                if not (1024 <= port <= 65534):
+                    raise ValueError(f"Port {port} out of range (1024–65534).")
+                if port % 2 == 0:
+                    raise ValueError(
+                        f"Port {port} is even. HydraCast requires an ODD RTSP port "
+                        f"(HLS will use the adjacent even port {port + 1}). "
+                        f"Try port {port + 1} or use the Check Port button."
+                    )
 
                 # Stream path — empty string means root mount (IP:Port/)
                 stream_path = str(data.get("stream_path", "")).strip()
