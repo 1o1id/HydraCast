@@ -14,39 +14,73 @@ if not exist "%target_dir%" (
 :: 2. Display the options menu
 echo.
 echo Select Renaming Option:
-echo 1. Short Underscore to Long Underscore   (e.g., _MON_ to _MONDAY_)
-echo 2. Long Underscore to Short Underscore   (e.g., _MONDAY_ to _MON_)
-echo 3. Parentheses to Short Underscore       (e.g., (MON) or (MONDAY) to _MON_)
-echo 4. Parentheses to Double Underscore Long (e.g., (MON) or (MONDAY) to __MONDAY__)
+echo 1. Direct Swap: Keep length, change () to _ (e.g., (MON) -> _MON_ / (MONDAY) -> _MONDAY_)
+echo 2. Convert all to Short Underscore        (e.g., (MON) or (MONDAY) -> _MON_)
+echo 3. Convert all to Long Underscore         (e.g., (MON) or (MONDAY) -> _MONDAY_)
 echo.
 
-choice /c 1234 /m "Enter your choice (1-4): "
+choice /c 123 /m "Enter your choice (1-3): "
 set "choice=%errorlevel%"
 
 echo --------------------------------------------------
 echo Processing files and folders...
 echo --------------------------------------------------
 
-:: Define day mappings (SHORT:LONG)
-set "days=MON:MONDAY TUE:TUESDAY WED:WEDNESDAY THU:THURSDAY FRI:FRIDAY SAT:SATURDAY SUN:SUNDAY"
+:: Option 1: Direct Swap () to _
+if "%choice%"=="1" (
+    call :Work "(MONDAY)" "_MONDAY_"
+    call :Work "(TUESDAY)" "_TUESDAY_"
+    call :Work "(WEDNESDAY)" "_WEDNESDAY_"
+    call :Work "(THURSDAY)" "_THURSDAY_"
+    call :Work "(FRIDAY)" "_FRIDAY_"
+    call :Work "(SATURDAY)" "_SATURDAY_"
+    call :Work "(SUNDAY)" "_SUNDAY_"
+    
+    call :Work "(MON)" "_MON_"
+    call :Work "(TUE)" "_TUE_"
+    call :Work "(WED)" "_WED_"
+    call :Work "(THU)" "_THU_"
+    call :Work "(FRI)" "_FRI_"
+    call :Work "(SAT)" "_SAT_"
+    call :Work "(SUN)" "_SUN_"
+)
 
-:: Loop through each day pair
-for %%A in (%days%) do (
-    for /f "tokens=1,2 delims=:" %%B in ("%%A") do (
-        set "short=%%B"
-        set "long=%%C"
+:: Option 2: Force Short Underscore
+if "%choice%"=="2" (
+    call :Work "(MONDAY)" "_MON_"
+    call :Work "(TUESDAY)" "_TUE_"
+    call :Work "(WEDNESDAY)" "_WED_"
+    call :Work "(THURSDAY)" "_THU_"
+    call :Work "(FRIDAY)" "_FRI_"
+    call :Work "(SATURDAY)" "_SAT_"
+    call :Work "(SUNDAY)" "_SUN_"
+    
+    call :Work "(MON)" "_MON_"
+    call :Work "(TUE)" "_TUE_"
+    call :Work "(WED)" "_WED_"
+    call :Work "(THU)" "_THU_"
+    call :Work "(FRI)" "_FRI_"
+    call :Work "(SAT)" "_SAT_"
+    call :Work "(SUN)" "_SUN_"
+)
 
-        if "!choice!"=="1" call :Process "_!short!_" "_!long!_"
-        if "!choice!"=="2" call :Process "_!long!_" "_!short!_"
-        if "!choice!"=="3" (
-            call :Process "(!short!)" "_!short!_"
-            call :Process "(!long!)" "_!short!_"
-        )
-        if "!choice!"=="4" (
-            call :Process "(!short!)" "__!long!__"
-            call :Process "(!long!)" "__!long!__"
-        )
-    )
+:: Option 3: Force Long Underscore
+if "%choice%"=="3" (
+    call :Work "(MONDAY)" "_MONDAY_"
+    call :Work "(TUESDAY)" "_TUESDAY_"
+    call :Work "(WEDNESDAY)" "_WEDNESDAY_"
+    call :Work "(THURSDAY)" "_THURSDAY_"
+    call :Work "(FRIDAY)" "_FRIDAY_"
+    call :Work "(SATURDAY)" "_SATURDAY_"
+    call :Work "(SUNDAY)" "_SUNDAY_"
+    
+    call :Work "(MON)" "_MONDAY_"
+    call :Work "(TUE)" "_TUESDAY_"
+    call :Work "(WED)" "_WEDNESDAY_"
+    call :Work "(THU)" "_THURSDAY_"
+    call :Work "(FRI)" "_FRIDAY_"
+    call :Work "(SAT)" "_SATURDAY_"
+    call :Work "(SUN)" "_SUNDAY_"
 )
 
 echo --------------------------------------------------
@@ -54,8 +88,8 @@ echo Done! All matching items have been processed.
 pause
 exit /b
 
-:: Dynamic Processing Subroutine
-:Process
+:: The core processing engine
+:Work
 set "search=%~1"
 set "replace=%~2"
 
@@ -64,8 +98,8 @@ for /f "delims=" %%F in ('dir "%target_dir%\*%search%*" /b /s /a:-d 2^>nul') do 
     set "filepath=%%F"
     set "filename=%%~nxF"
     
-    :: Safely evaluate dynamic string replacement
-    call set "newfilename=%%filename:!search!=!replace!%%"
+    :: Correctly evaluate string replacement using pre-expanded search and replace values
+    call set "newfilename=%%filename:%search%=%replace%%%"
     
     if not "!filename!"=="!newfilename!" (
         echo Renaming File: !filename! -^> !newfilename!
@@ -73,12 +107,12 @@ for /f "delims=" %%F in ('dir "%target_dir%\*%search%*" /b /s /a:-d 2^>nul') do 
     )
 )
 
-:: Step B: Rename Folders (Deepest paths sorted first via 'sort /r')
+:: Step B: Rename Folders (Deepest paths first via 'sort /r' so paths don't break)
 for /f "delims=" %%D in ('dir "%target_dir%\*%search%*" /b /s /a:d 2^>nul ^| sort /r') do (
     set "dirpath=%%D"
     set "dirname=%%~nxD"
     
-    call set "newdirname=%%dirname:!search!=!replace!%%"
+    call set "newdirname=%%dirname:%search%=%replace%%%"
     
     if not "!dirname!"=="!newdirname!" (
         echo Renaming Folder: !dirname! -^> !newdirname!
