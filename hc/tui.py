@@ -37,11 +37,37 @@ from hc.constants import (
     APP_VER, APP_AUTHOR, APP_GITHUB,
     CC, CD, CG, CM, CR, CW, CY, CB,
     CPU_COUNT, IS_WIN, get_web_port, set_web_port,
+    SSL_CERT, SSL_KEY, get_ssl_cert, get_ssl_key,
 )
 from hc.manager import StreamManager
 from hc.models import StreamStatus
 from hc.utils import _local_ip
 from hc.worker import LogBuffer
+
+
+def _web_schema() -> str:
+    """
+    Return 'https' when SSL is (or will be) active, 'http' otherwise.
+    Mirrors the resolution logic in WebServer._resolve_ssl so the TUI
+    always shows the correct schema even before the server has started.
+    """
+    from pathlib import Path
+    port = get_web_port()
+    # CLI-explicit cert paths
+    cli_cert = get_ssl_cert()
+    cli_key  = get_ssl_key()
+    if cli_cert and cli_key and Path(cli_cert).is_file() and Path(cli_key).is_file():
+        return "https"
+    # Default ssl/ directory certs
+    try:
+        if SSL_CERT().is_file() and SSL_KEY().is_file():
+            return "https"
+    except RuntimeError:
+        pass  # set_base_dir not yet called
+    # Port 443 triggers auto-generation → will be HTTPS
+    if port == 443:
+        return "https"
+    return "http"
 
 
 # ── Status colour map  (one distinct colour per state) ───────────────────────
@@ -63,9 +89,9 @@ _STATUS_STYLE: dict[StreamStatus, tuple[str, str]] = {
 
 def _header_panel() -> Panel:
     """Slim, information-dense header: wordmark left, Web UI URL right."""
-    ip   = _local_ip()
-    port = get_web_port()
-    schema = "https" if port == 443 else "http"
+    ip     = _local_ip()
+    port   = get_web_port()
+    schema = _web_schema()
 
     left = Text()
     left.append("◈ ", style="bold bright_cyan")
@@ -211,7 +237,7 @@ class TUI:
 
         ip   = _local_ip()
         port = get_web_port()
-        schema = "https" if port == 443 else "http"
+        schema = _web_schema()
 
         t = Text()
         t.append("CPU  ", style=CD); t.append_text(self._progress_bar(cpu, 12));    t.append("\n")
