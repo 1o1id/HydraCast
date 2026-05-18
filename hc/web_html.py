@@ -10,7 +10,7 @@ _HTML = r"""
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>HydraCast</title>
+<title>__APP_NAME__</title>
 <link rel="icon" type="image/svg+xml" href="https://raw.githubusercontent.com/rhshourav/HydraCast/refs/heads/main/resources/HydraCast.svg">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.10.0/dist/tabler-icons.min.css">
@@ -316,13 +316,13 @@ a:hover{color:var(--accent)}
 }
 .logo-icon{
   width:36px;height:36px;
-  background:#12080c;
+  background:#ffffff;
   border-radius:10px;display:flex;align-items:center;justify-content:center;
-  font-size:15px;font-weight:900;color:#fff;flex-shrink:0;
-  box-shadow:0 3px 10px rgba(160,30,50,0.35);
+  font-size:15px;font-weight:900;color:#333;flex-shrink:0;
+  box-shadow:0 3px 10px rgba(255,255,255,0.18);
   transition:transform 0.2s,box-shadow 0.2s;
 }
-.logo-icon:hover{transform:scale(1.08);box-shadow:0 5px 16px rgba(160,30,50,0.5)}
+.logo-icon:hover{transform:scale(1.08);box-shadow:0 5px 16px rgba(255,255,255,0.28)}
 .logo sub{
   font-family:var(--font-mono);font-size:11px;color:var(--text3);
   font-weight:400;vertical-align:middle;margin-left:3px;
