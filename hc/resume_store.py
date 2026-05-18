@@ -1,7 +1,7 @@
 """
 hc/resume_store.py — Disk-based per-stream resume-position storage.
 
-Positions are written to  <BASE_DIR>/resume_positions.json  so they survive a
+Positions are written to  <CONFIG_DIR>/resume_positions.json  so they survive a
 full program restart.  The file is keyed by stream name; each entry records
 the file path, playback position in seconds, and a human-readable timestamp.
 
@@ -26,8 +26,8 @@ _lock = threading.Lock()
 # ---------------------------------------------------------------------------
 
 def _resume_file() -> Path:
-    from hc.constants import BASE_DIR
-    return BASE_DIR() / "resume_positions.json"
+    from hc.constants import CONFIG_DIR
+    return CONFIG_DIR() / "resume_positions.json"
 
 
 def _load_all() -> Dict:
