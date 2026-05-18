@@ -6,8 +6,8 @@ v6.2 changes
 • apply_cli_args(args) helper: call it from main.py after argparse.parse_args()
   to wire --web-port / --port, --listen, --ssl-cert, --ssl-key, --no-firewall
   into the shared _flags dict in one place.
-• WEB_PORT default changed to 8080 (non-privileged) so the app works without
-  root out of the box; pass --web-port 443 (with SSL certs) for HTTPS.
+• WEB_PORT default changed to 443 (HTTPS); WebServer auto-generates a
+  self-signed cert when ssl/cert.pem + ssl/key.pem are absent.
 • validate_port() utility used by both CLI and the TUI port-change prompt.
 
 v6.0 / v6.1 changes kept below.
@@ -79,8 +79,10 @@ def CSV_FILE()       -> Path: return _require("CSV")
 def EVENTS_CSV()     -> Path: return _require("EVENTS_CSV")
 
 # ── Web / upload ──────────────────────────────────────────────────────────────
-# Default is 8080 (no root required).  Override with --web-port 443 for HTTPS.
-WEB_PORT         = 8080
+# Default is 443 (HTTPS).  WebServer will auto-generate a self-signed cert when
+# ssl/cert.pem + ssl/key.pem are absent.  Override with --web-port 8080 for
+# plain HTTP (no cert required).
+WEB_PORT         = 443
 UPLOAD_MAX_BYTES = 10 * 1024 * 1024 * 1024  # 10 GB
 
 # ── MediaMTX ──────────────────────────────────────────────────────────────────
@@ -176,11 +178,11 @@ def build_arg_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  hydracast.py                         # HTTP on :8080\n"
-            "  hydracast.py --web-port 80           # HTTP on :80  (needs root/cap)\n"
-            "  hydracast.py --web-port 443           # HTTPS on :443 (needs ssl/)\n"
-            "  hydracast.py --port 9000              # alias for --web-port\n"
-            "  hydracast.py --listen 192.168.1.10   # bind to specific interface\n"
+            "  hydracast.py                         # HTTPS on :443 (auto self-signed cert)\n"
+            "  hydracast.py --web-port 8080         # HTTP on :8080 (no cert required)\n"
+            "  hydracast.py --web-port 80           # HTTP on :80   (needs root/cap)\n"
+            "  hydracast.py --port 9000             # alias for --web-port\n"
+            "  hydracast.py --listen 192.168.1.10  # bind to specific interface\n"
             "  hydracast.py --ssl-cert /etc/ssl/cert.pem --ssl-key /etc/ssl/key.pem\n"
             "  hydracast.py --no-firewall            # skip OS firewall rule setup\n"
         ),
@@ -194,7 +196,8 @@ def build_arg_parser():
         default=None,
         help=(
             f"TCP port for the Web UI (default: {WEB_PORT}). "
-            "Use 443 with --ssl-cert/--ssl-key for HTTPS. "
+            "Port 443 uses HTTPS (auto self-signed if no cert present). "
+            "Any other port uses plain HTTP unless --ssl-cert/--ssl-key are given. "
             "Ports below 1024 typically require elevated privileges."
         ),
     )
