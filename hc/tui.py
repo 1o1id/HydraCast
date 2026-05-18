@@ -38,6 +38,7 @@ from hc.constants import (
     CC, CD, CG, CM, CR, CW, CY, CB,
     CPU_COUNT, IS_WIN, get_web_port, set_web_port,
     SSL_CERT, SSL_KEY, get_ssl_cert, get_ssl_key,
+    get_http_port,
 )
 from hc.manager import StreamManager
 from hc.models import StreamStatus
@@ -88,10 +89,12 @@ _STATUS_STYLE: dict[StreamStatus, tuple[str, str]] = {
 # =============================================================================
 
 def _header_panel() -> Panel:
-    """Slim, information-dense header: wordmark left, Web UI URL right."""
-    ip     = _local_ip()
-    port   = get_web_port()
-    schema = _web_schema()
+    """Slim, information-dense header: wordmark left, Web UI URL(s) right."""
+    ip        = _local_ip()
+    https_port = get_web_port()
+    http_port  = get_http_port()
+    schema     = _web_schema()
+    use_ssl    = schema == "https"
 
     left = Text()
     left.append("◈ ", style="bold bright_cyan")
@@ -101,10 +104,13 @@ def _header_panel() -> Panel:
 
     right = Text(justify="right")
     right.append("Web UI  ", style="dim white")
-    right.append(f"{schema}://{ip}:{port}", style="bold bright_cyan")
+    right.append(f"{schema}://{ip}:{https_port}", style="bold bright_cyan")
+    if use_ssl and http_port != 0:
+        right.append("  ", style="dim white")
+        right.append(f"http://{ip}:{http_port}", style="dim cyan")
+        right.append(" →redirect", style="dim white")
     right.append("  [P] change port", style="dim white")
 
-    # Two-column layout inside the panel
     row = Table.grid(expand=True)
     row.add_column(ratio=1)
     row.add_column(ratio=1, justify="right")
@@ -235,9 +241,11 @@ class TUI:
         stop_n  = sum(1 for s in states if s.status == StreamStatus.STOPPED)
         pending = sum(1 for e in self.manager.events if not e.played)
 
-        ip   = _local_ip()
-        port = get_web_port()
-        schema = _web_schema()
+        ip         = _local_ip()
+        https_port = get_web_port()
+        http_port  = get_http_port()
+        schema     = _web_schema()
+        use_ssl    = schema == "https"
 
         t = Text()
         t.append("CPU  ", style=CD); t.append_text(self._progress_bar(cpu, 12));    t.append("\n")
@@ -252,7 +260,9 @@ class TUI:
         t.append("\n")
         t.append("◈ ", style=CM); t.append(f"Events {pending} pending\n\n", style=CM)
         t.append(f"  LAN: {ip}\n", style=CD)
-        t.append(f"  Web: {schema}://{ip}:{port}\n", style="bold bright_cyan")
+        t.append(f"  Web: {schema}://{ip}:{https_port}\n", style="bold bright_cyan")
+        if use_ssl and http_port != 0:
+            t.append(f"  HTTP→HTTPS: :{http_port}\n", style="dim cyan")
         t.append(datetime.now().strftime("  %a  %Y-%m-%d  %H:%M:%S"), style=CD)
 
         return Panel(t, title=f"[bold {CW}]SYSTEM[/]",
