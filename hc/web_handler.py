@@ -25,6 +25,7 @@ from hc.utils import _fmt_duration, _fmt_size, _local_ip, _safe_path
 from hc.web_html import _HTML
 from hc.web_csvmanager import CSVManager
 from hc import APP_NAME as _APP_NAME, APP_VER as _APP_VER_INIT
+from hc.web_access_log import log_access as _log_access
 
 # Pre-render the HTML template with APP_NAME from hc/__init__.py
 _HTML_RENDERED = _HTML.replace("__APP_NAME__", _APP_NAME)
@@ -175,7 +176,7 @@ from hc.web_handlers_calendar import _CalendarHandlersMixin
 class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandler):
 
     def log_message(self, *args: Any) -> None:
-        pass  # suppress default access log
+        pass  # access logging is done in _send() via hc.web_access_log
 
     def _send(self, code: int, body: Union[str, bytes], ct: str = "application/json") -> None:
         if isinstance(body, str):
@@ -190,6 +191,11 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
         try:
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
+            pass
+        # ── Structured access log (IP · method · path · status · bytes) ──────
+        try:
+            _log_access(self, code, len(body))
+        except Exception:
             pass
 
     def _json(self, data: Any, code: int = 200) -> None:
@@ -299,7 +305,8 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
             except Exception:
                 self._json({"ok": False, "msg": "Invalid JSON"}, 400); return
             from hc.web_upload import handle_upload_init
-            resp, code = handle_upload_init(data)
+            # Pass self so handler can extract real client IP and log it.
+            resp, code = handle_upload_init(data, handler=self)
             self._json(resp, code)
             return
 
@@ -312,7 +319,7 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
             except Exception as exc:
                 self._json({"ok": False, "msg": f"Read error: {exc}"}, 500); return
             from hc.web_upload import handle_upload_chunk
-            resp, code = handle_upload_chunk(raw_body, ct)
+            resp, code = handle_upload_chunk(raw_body, ct, handler=self)
             self._json(resp, code)
             return
 
@@ -324,7 +331,7 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
             except Exception:
                 self._json({"ok": False, "msg": "Invalid JSON"}, 400); return
             from hc.web_upload import handle_upload_finalize
-            resp, code = handle_upload_finalize(data)
+            resp, code = handle_upload_finalize(data, handler=self)
             self._json(resp, code)
             return
 
@@ -337,9 +344,11 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                 self._json({"ok": False, "msg": "Invalid JSON"}, 400); return
             sid = str(data.get("session_id", "")).strip()
             if sid:
-                from hc.web_upload import _UPLOAD_MANAGER
-                _UPLOAD_MANAGER.abort(sid)
-            self._json({"ok": True})
+                from hc.web_upload import handle_upload_abort
+                resp, code = handle_upload_abort(sid, handler=self)
+                self._json(resp, code)
+            else:
+                self._json({"ok": True})
             return
 
         # ── Legacy single-shot upload (multipart/form-data catch-all) ────────
@@ -770,7 +779,7 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
             self._json({"status": "error", "error": str(exc), "token_exists": False})
 
     def _get_upload_status(self, qs: Dict[str, Any]) -> None:
-        """GET /api/upload/status?session_id=X  — chunked upload progress."""
+        """GET /api/upload/status?session_id=X  — chunked upload progress + resume info."""
         from hc.web_upload import handle_upload_status
         session_id = qs.get("session_id", [""])[0].strip()
         resp, code = handle_upload_status(session_id)
@@ -1507,14 +1516,16 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
         else:
             self._json({"ok": False, "msg": f"Unknown action: {action}"}, 404)
 
-    # ── Multipart upload ─────────────────────────────────────────────────────
+    # ── Multipart upload (legacy single-shot, kept for backward-compat) ────────
     def _handle_upload(self) -> None:
+        from hc.web_access_log import _real_ip
         try:
             cl = int(self.headers.get("Content-Length", 0))
             if cl > UPLOAD_MAX_BYTES:
                 self._json({"ok": False, "msg": "File exceeds 10 GB limit"}, 413)
                 return
 
+            client_ip = _real_ip(self)
             ct = self.headers.get("Content-Type", "")
             boundary: Optional[bytes] = None
             for part in ct.split(";"):
@@ -1595,7 +1606,12 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                 raise
 
             _invalidate_lib_cache()
-            log.info("Upload saved: %s", dest)
+            import logging as _lg
+            _lg.getLogger("hc.upload_audit").info(
+                "LEGACY UPLOAD  ip=%-15s  file=%-40s  size=%d B",
+                client_ip, safe_name, len(file_bytes),
+            )
+            log.info("Upload saved: %s (ip=%s)", dest, client_ip)
             # ── Notify folder-source streams about the new file ──
             _notify_folder_upload(safe_dir)
             self._json({"ok": True, "msg": f"Saved: {safe_name}"})
