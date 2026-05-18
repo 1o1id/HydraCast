@@ -3098,7 +3098,7 @@ function renderConfigEditor(s){
               class="port-icon-btn"
               onclick="suggestNextPort('cfg-port','cfg-port-check-result')"
               title="Auto-find next free odd port">
-              <i class="ti ti-wand"></i>
+              ✦
             </button>
             <button type="button" class="port-action-btn check"
               onclick="checkPort('cfg-port','cfg-port-check-result')"
@@ -3514,7 +3514,7 @@ function showNewStreamForm(){
               class="port-icon-btn"
               onclick="suggestNextPort('new-port','new-port-check-result')"
               title="Auto-find next free odd port">
-              <i class="ti ti-wand"></i>
+              ✦
             </button>
             <button type="button" class="port-action-btn check"
               onclick="checkPort('new-port','new-port-check-result')"
@@ -3673,7 +3673,7 @@ async function suggestNextPort(inputId, resultId){
   }catch(e){
     _showPortNotif(_portBanner('err','Suggest failed: '+esc(e.message||String(e))));
   }finally{
-    if(suggestBtn){ suggestBtn.innerHTML=suggestBtn._origHTML||'<i class="ti ti-wand"></i>'; suggestBtn.disabled=false; }
+    if(suggestBtn){ suggestBtn.innerHTML=suggestBtn._origHTML||'✦'; suggestBtn.disabled=false; }
   }
 }
 
@@ -3774,7 +3774,7 @@ async function checkPort(inputId, resultId){
       html += `<button type="button"
         class="port-action-btn suggest" style="width:100%;justify-content:center"
         onclick="suggestNextPort('${inputId}','${resultId}')">
-        <i class="ti ti-wand"></i> Find next free port
+        ✦ Find next free port
       </button>`;
     }
 
@@ -4902,6 +4902,61 @@ document.addEventListener('DOMContentLoaded',function(){
 function toggleTheme(){
   const cb=document.getElementById('hc-theme-cb');
   if(cb){cb.checked=!cb.checked;cb.dispatchEvent(new Event('change'));}
+}
+
+// ═══════════════════════════════════
+// PORT NOTIFICATION PANEL HELPERS
+// ═══════════════════════════════════
+function _showPortNotif(html){
+  const panel=document.getElementById('port-notif-panel');
+  const body=document.getElementById('port-notif-body');
+  if(!panel||!body)return;
+  body.innerHTML=html;
+  panel.classList.remove('closing');
+  panel.classList.add('open');
+  // Dismiss when clicking anywhere outside the panel
+  setTimeout(()=>{
+    function _outsideClick(e){
+      if(!panel.contains(e.target)){
+        closePortNotif();
+        document.removeEventListener('click',_outsideClick);
+      }
+    }
+    document.addEventListener('click',_outsideClick);
+  },200);
+}
+
+function closePortNotif(){
+  const panel=document.getElementById('port-notif-panel');
+  if(!panel)return;
+  panel.classList.add('closing');
+  setTimeout(()=>panel.classList.remove('open','closing'),190);
+}
+
+function _portSpinner(msg){
+  return `<div class="pnb info" style="animation:none">
+    <i class="ti ti-loader-2" style="animation:spin 0.8s linear infinite;font-size:14px;flex-shrink:0"></i>
+    <span>${esc(msg)}</span>
+  </div>`;
+}
+
+function _portBanner(type,msg){
+  const icons={ok:'ti-circle-check',err:'ti-circle-x',warn:'ti-alert-triangle',info:'ti-info-circle'};
+  return `<div class="pnb ${type}">
+    <i class="ti ${icons[type]||'ti-info-circle'}" style="font-size:14px;flex-shrink:0"></i>
+    <span>${msg}</span>
+  </div>`;
+}
+
+function _portMapChips(ports){
+  return Object.entries(ports||{}).map(([p,info])=>{
+    const cls=info.free?'ok':'err';
+    const icon=info.free?'✓':'✕';
+    return `<span class="pmc ${cls}" title="${info.free?'Free':'In use by: '+(info.process||'unknown')}">
+      <span class="pmc-icon">${icon}</span>${p}
+      <span class="pmc-label">${esc(info.label||'')}</span>
+    </span>`;
+  }).join('');
 }
 
 // ═══════════════════════════════════
