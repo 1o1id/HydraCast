@@ -1,6 +1,20 @@
 """
 hc/mediamtx_cfg.py  —  Generate per-stream MediaMTX YAML config files.
 
+PORT SCHEME (v6.2+)
+────────────────────
+  RTSP port  — must be ODD  (e.g. 8555, 8557, 8559 …)
+  HLS  port  — RTSP + 1    (even, adjacent)
+  RTP  port  — RTSP + 2    (bumped to next even number if odd; RFC 3550)
+  RTCP port  — RTP  + 1    (odd)
+
+  Example:  RTSP=8555  HLS=8556  RTP=8558 (even✓)  RTCP=8559 (odd✓)
+
+  The port checker (web UI + /api/check_port) validates:
+    • the chosen port is odd
+    • all four derived ports (RTSP, HLS, RTP, RTCP) are free
+    • no OS firewall rule blocks them
+
 FIX (v5.0.6 / v6.0):
   • spath = cfg.rtsp_path  (no "~all" fallback).
     The new version used  spath = cfg.rtsp_path if cfg.rtsp_path else "~all"
@@ -15,25 +29,12 @@ FIX (v5.0.6 / v6.0):
          broke multi-stream isolation.
 
   • hlsAllowOrigin: '*'  — singular, plain string (unchanged from v5.0.6).
-    v1.9.1 uses the OLD singular key. The plural `hlsAllowOrigins` with a
-    list was introduced in a later release; using it in v1.9.1 raises
-    ERR: json: unknown field "hlsAllowOrigins".
-
   • hlsPartDuration: 0s  — disables Low-Latency HLS (LL-HLS).
-    MediaMTX v1.9.1 enables LL-HLS by default (hlsPartDuration > 0).
-    LL-HLS is incompatible with hlsVariant: mpegts, which causes MediaMTX
-    to log "Low-Latency HLS requires at least 7 segments" every 10 s for
-    the entire stream lifetime.  Setting hlsPartDuration: 0s disables LL-HLS
-    and silences this error completely.
 
 Previously fixed:
   v5.0.5 — hlsAlwaysRemux: true, removed `source: publisher` from paths
   v5.0.4 — rtmp/srt/webrtc: false (correct v1.9.1 disable keys)
   v5.0.3 — log file opened with "w" so stale errors don't pollute new runs
-
-RTP port assignment (unchanged):
-  rtp_base = port + 2, bumped to next even number if odd.
-  Example: 8554 → rtp=8556, rtcp=8557 | 8564 → rtp=8566, rtcp=8567
 """
 from __future__ import annotations
 
@@ -73,7 +74,10 @@ class MediaMTXConfig:
         MediaMTXConfig._purge_stale(port)
 
         # ── RTP / RTCP port calculation ──────────────────────────────────────
-        # RFC 3550 §11: RTP port MUST be even, RTCP = RTP + 1.
+        # Port scheme: RTSP = odd (e.g. 8555), HLS = RTSP+1 (even),
+        #              RTP  = RTSP+2 bumped to next even (RFC 3550 §11),
+        #              RTCP = RTP+1 (odd).
+        # Example: RTSP=8555 → HLS=8556, RTP=8558 (even✓), RTCP=8559 (odd✓)
         rtp_base = port + 2
         if rtp_base % 2 != 0:
             rtp_base += 1
@@ -81,8 +85,8 @@ class MediaMTXConfig:
         rtcp_addr = f"{addr}:{rtp_base + 1}"
 
         log.info(
-            "[%s] Port assignment: RTSP=%d  RTP=%d (even✓)  RTCP=%d",
-            cfg.name, port, rtp_base, rtp_base + 1,
+            "[%s] Port assignment: RTSP=%d (odd✓)  HLS=%d  RTP=%d (even✓)  RTCP=%d",
+            cfg.name, port, cfg.hls_port, rtp_base, rtp_base + 1,
         )
 
         # ── Protocol sections ────────────────────────────────────────────────
@@ -133,7 +137,7 @@ class MediaMTXConfig:
         yaml_text = (
             f"# HydraCast v{APP_VER} — {cfg.name} (:{port})\n"
             f"# Stream path: /{spath}   RTSP push → rtsp://127.0.0.1:{port}/{spath}\n"
-            f"# RTP port {rtp_base} (even ✓)  RTCP port {rtp_base+1} (odd ✓)\n"
+            f"# RTSP={port} (odd✓)  HLS={cfg.hls_port}  RTP={rtp_base} (even✓)  RTCP={rtp_base+1}\n"
             f"# rtmp/srt/webrtc: false prevents port-1935/8890/8889 collisions\n"
             f"logLevel: error\n"
             f"logDestinations: [file]\n"
