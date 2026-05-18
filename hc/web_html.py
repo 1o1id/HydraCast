@@ -1007,7 +1007,7 @@ select option{background:var(--bg3)}
 <header class="topbar">
   <div class="logo">
     <div class="logo-icon" id="logo-icon-wrap" style="cursor:default">
-      <img id="logo-img" src="/resources/logo.png" alt="__APP_NAME__"
+      <img id="logo-img" src="/resources/logo.png" alt="HydraCast"
            style="display:none;position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:10px"
            onload="this.style.display='block';document.getElementById('logo-letter').style.display='none'"
            onerror="this.style.display='none';document.getElementById('logo-letter').style.display=''">
@@ -1017,7 +1017,7 @@ select option{background:var(--bg3)}
       </span>
     </div>
     __APP_NAME__
-    <sub id="ver-badge">__APP_VER__</sub>
+    <sub id="ver-badge">v—</sub>
   </div>
 
   <nav class="nav-tabs">
@@ -1810,13 +1810,13 @@ select option{background:var(--bg3)}
 <footer class="app-footer">
   <span id="ft-app-name" style="display:inline-flex;align-items:center;gap:6px;">
     <img src="https://raw.githubusercontent.com/rhshourav/HydraCast/refs/heads/main/resources/HydraCast.svg"
-         alt="__APP_NAME__ logo"
+         alt="HydraCast logo"
          style="width:16px;height:16px;flex-shrink:0;opacity:0.85;"
          onerror="this.style.display='none'">
-    __APP_NAME__
+    HydraCast
   </span>
   <span class="footer-sep">·</span>
-  <span id="ft-ver">__APP_VER__</span>
+  <span id="ft-ver">—</span>
   <span class="footer-sep">·</span>
   <a href="https://github.com/rhshourav"
      target="_blank" rel="noopener"
