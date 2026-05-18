@@ -14,7 +14,7 @@ from __future__ import annotations
 import multiprocessing
 import platform
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 # ── App metadata ──────────────────────────────────────────────────────────────
 APP_NAME   = "HydraCast"
@@ -44,6 +44,7 @@ def set_base_dir(script_path: Path) -> None:
     _dirs["CONFIGS"] = base / "configs"             # ← mediamtx generated YAMLs
     _dirs["LOGS"]    = base / "logs"
     _dirs["MEDIA"]   = base / "media"
+    _dirs["SSL"]     = base / "ssl"                 # ← SSL cert/key directory
     # Canonical config file locations inside config/
     _dirs["STREAMS_JSON"] = base / "config" / "streams.json"
     _dirs["EVENTS_JSON"]  = base / "config" / "events.json"
@@ -51,7 +52,7 @@ def set_base_dir(script_path: Path) -> None:
     _dirs["CSV"]          = base / "streams.csv"       # old streams location
     _dirs["EVENTS_CSV"]   = base / "events.csv"        # old events location
     # Create required runtime dirs
-    for key in ("BIN", "CONFIG", "CONFIGS", "LOGS", "MEDIA"):
+    for key in ("BIN", "CONFIG", "CONFIGS", "LOGS", "MEDIA", "SSL"):
         _dirs[key].mkdir(parents=True, exist_ok=True)
 
 
@@ -72,6 +73,9 @@ def CONFIG_DIR()     -> Path: return _require("CONFIG")
 def CONFIGS_DIR()    -> Path: return _require("CONFIGS")
 def LOGS_DIR()       -> Path: return _require("LOGS")
 def MEDIA_DIR()      -> Path: return _require("MEDIA")
+def SSL_DIR()        -> Path: return _require("SSL")
+def SSL_CERT()       -> Path: return _require("SSL") / "cert.pem"
+def SSL_KEY()        -> Path: return _require("SSL") / "key.pem"
 def STREAMS_JSON()   -> Path: return _require("STREAMS_JSON")
 def EVENTS_FILE()    -> Path: return _require("EVENTS_JSON")
 # Legacy helpers (used only by migration code)
@@ -118,14 +122,20 @@ _flags: Dict[str, object] = {
     "no_firewall": False,
     "listen_addr": "0.0.0.0",
     "web_port":    WEB_PORT,
+    "ssl_cert":    None,   # Path to SSL certificate (.pem) — overrides default ssl/cert.pem
+    "ssl_key":     None,   # Path to SSL private key (.pem) — overrides default ssl/key.pem
 }
 
 def NO_FIREWALL()  -> bool: return bool(_flags["no_firewall"])
 def LISTEN_ADDR()  -> str:  return str(_flags["listen_addr"])
 def get_web_port() -> int:  return int(_flags["web_port"])
+def get_ssl_cert() -> "Optional[str]": return _flags["ssl_cert"]  # type: ignore[return-value]
+def get_ssl_key()  -> "Optional[str]": return _flags["ssl_key"]   # type: ignore[return-value]
 def set_no_firewall(v: bool)  -> None: _flags["no_firewall"] = v
 def set_listen_addr(v: str)   -> None: _flags["listen_addr"] = v
 def set_web_port(v: int)      -> None: _flags["web_port"]    = v
+def set_ssl_cert(v: str)      -> None: _flags["ssl_cert"]    = v
+def set_ssl_key(v: str)       -> None: _flags["ssl_key"]     = v
 
 # ── Weekdays ──────────────────────────────────────────────────────────────────
 from typing import Any, List, Union  # noqa: E402
