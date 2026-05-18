@@ -343,27 +343,48 @@ _HTML = r"""
   background:var(--bg3);color:var(--text3);
 }
 /* Port field row in config */
-.port-field-row{display:flex;align-items:center;gap:6px}
+.port-field-row{display:flex;align-items:center;gap:5px}
 .port-field-row input[type=number]{
-  width:90px;flex-shrink:0;
+  width:80px;flex-shrink:0;
   font-family:var(--font-mono);font-size:13px;font-weight:600;
   text-align:center;
 }
+/* Icon-only square button (Suggest) */
+.port-icon-btn{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:32px;height:32px;border-radius:7px;
+  font-size:14px;cursor:pointer;flex-shrink:0;
+  border:1px solid;transition:all 0.18s;
+  background:var(--bg3);border-color:var(--border);color:var(--text3);
+}
+.port-icon-btn:hover{background:var(--blue-dim);border-color:rgba(122,159,194,0.55);color:var(--blue)}
+.port-icon-btn:disabled{opacity:0.45;pointer-events:none}
 .port-action-btn{
   display:inline-flex;align-items:center;gap:5px;
-  height:32px;padding:0 12px;border-radius:7px;
+  height:32px;padding:0 11px;border-radius:7px;
   font-size:11px;font-weight:600;cursor:pointer;
   border:1px solid;transition:all 0.18s;white-space:nowrap;flex-shrink:0;
 }
 .port-action-btn.suggest{
-  background:var(--blue-dim);border-color:rgba(122,159,194,0.45);
-  color:var(--blue);
+  background:var(--blue-dim);border-color:rgba(122,159,194,0.45);color:var(--blue);
 }
 .port-action-btn.suggest:hover{background:rgba(122,159,194,0.22);border-color:var(--blue)}
 .port-action-btn.check{
   background:var(--bg3);border-color:var(--border);color:var(--text2);
 }
 .port-action-btn.check:hover{border-color:var(--accent);color:var(--accent);background:rgba(184,115,51,0.07)}
+/* Firewall open button inside notification panel */
+.fw-open-btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  width:100%;height:34px;border-radius:8px;
+  font-size:12px;font-weight:600;cursor:pointer;
+  border:1px solid rgba(201,168,120,0.55);
+  background:var(--yellow-dim);color:var(--yellow);
+  transition:all 0.2s;
+}
+.fw-open-btn:hover{background:rgba(201,168,120,0.22);border-color:var(--yellow)}
+.fw-open-btn:disabled{opacity:0.5;pointer-events:none}
+.fw-open-btn.done{background:var(--green-dim);border-color:rgba(107,142,107,0.55);color:var(--green)}
 /* Info button */
 .info-btn{
   display:inline-flex;align-items:center;justify-content:center;
@@ -3074,15 +3095,15 @@ function renderConfigEditor(s){
               oninput="if(+this.value%2===0&&this.value)this.value=+this.value+1"
               title="Must be an ODD number. HLS will use this port + 1.">
             <button type="button" id="suggest-btn-cfg-port"
-              class="port-action-btn suggest"
+              class="port-icon-btn"
               onclick="suggestNextPort('cfg-port','cfg-port-check-result')"
-              title="Find the next completely free odd port">
-              <i class="ti ti-wand"></i> Suggest
+              title="Auto-find next free odd port">
+              <i class="ti ti-wand"></i>
             </button>
             <button type="button" class="port-action-btn check"
               onclick="checkPort('cfg-port','cfg-port-check-result')"
               title="Check if this port is free and firewall is open">
-              <i class="ti ti-search"></i> Check
+              <i class="ti ti-radar"></i> Check
             </button>
           </div>
           <div id="cfg-port-check-result" style="display:none"></div>
@@ -3490,21 +3511,21 @@ function showNewStreamForm(){
               oninput="if(+this.value%2===0&&this.value)this.value=+this.value+1"
               title="Must be an ODD number. HLS will use this port + 1 (even).">
             <button type="button" id="suggest-btn-new-port"
-              class="port-action-btn suggest"
+              class="port-icon-btn"
               onclick="suggestNextPort('new-port','new-port-check-result')"
-              title="Find the next completely free odd port">
-              <i class="ti ti-wand"></i> Suggest
+              title="Auto-find next free odd port">
+              <i class="ti ti-wand"></i>
             </button>
             <button type="button" class="port-action-btn check"
               onclick="checkPort('new-port','new-port-check-result')"
               title="Check if this port is free and firewall is open">
-              <i class="ti ti-search"></i> Check
+              <i class="ti ti-radar"></i> Check
             </button>
           </div>
           <div id="new-port-check-result" style="display:none"></div>
         </div>
         <div class="fg">
-          <label>Stream Path <span style="font-size:10px;color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0">(blank = root mount IP:Port/)</span></label>
+          <label>Stream Path <span style="font-size:10px;color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0">(blank = IP:Port/ root)</span></label>
           <input id="new-spath" value="" placeholder="e.g. live  (optional)">
         </div>
       </div>
@@ -3634,8 +3655,11 @@ async function suggestNextPort(inputId, resultId){
   if(!inp) return;
   const from = parseInt(inp.value||0)||8555;
   const suggestBtn = document.getElementById('suggest-btn-'+inputId);
-  const origLabel = suggestBtn ? suggestBtn.innerHTML : '';
-  if(suggestBtn){ suggestBtn.innerHTML='<i class="ti ti-loader-2" style="animation:spin 0.8s linear infinite"></i>'; suggestBtn.disabled=true; }
+  if(suggestBtn){
+    suggestBtn._origHTML = suggestBtn.innerHTML;
+    suggestBtn.innerHTML='<i class="ti ti-loader-2" style="animation:spin 0.8s linear infinite"></i>';
+    suggestBtn.disabled=true;
+  }
   _showPortNotif(_portSpinner('Scanning for a free port…'));
   try{
     const d = await fetch('/api/suggest_port?from='+from).then(r=>r.json());
@@ -3649,7 +3673,7 @@ async function suggestNextPort(inputId, resultId){
   }catch(e){
     _showPortNotif(_portBanner('err','Suggest failed: '+esc(e.message||String(e))));
   }finally{
-    if(suggestBtn){ suggestBtn.innerHTML=origLabel; suggestBtn.disabled=false; }
+    if(suggestBtn){ suggestBtn.innerHTML=suggestBtn._origHTML||'<i class="ti ti-wand"></i>'; suggestBtn.disabled=false; }
   }
 }
 
@@ -3709,18 +3733,35 @@ async function checkPort(inputId, resultId){
     }
     html += `</div>`;
 
-    // ── Firewall row ──────────────────────────────────────────────────────
+    // ── Firewall row with open button ─────────────────────────────────────
     if(d.firewall&&d.firewall.checked){
       const fwOk=!d.firewall.blocked;
       html += `<div class="fw-row">
         <i class="ti ti-shield${fwOk?'-check':'-x'}" style="color:${fwOk?'var(--green)':'var(--red)'};font-size:13px;flex-shrink:0"></i>
         <span style="font-size:11px;flex:1;color:${fwOk?'var(--green)':'var(--red)'}">${esc(d.firewall.detail)}</span>
       </div>`;
+      if(!fwOk){
+        const allPorts=Object.keys(d.ports||{}).map(Number).filter(Boolean);
+        html += `<button id="fw-open-action-btn" class="fw-open-btn"
+          onclick="openFirewall([${allPorts.join(',')}], '${inputId}')"
+          title="Attempt to automatically open these ports in your system firewall">
+          <i class="ti ti-shield-plus"></i> Open Ports in Firewall
+        </button>`;
+      }
     } else if(d.firewall&&d.firewall.detail){
       html += `<div class="fw-row">
         <i class="ti ti-info-circle" style="font-size:13px;flex-shrink:0"></i>
         <span style="font-size:11px;flex:1">${esc(d.firewall.detail)}</span>
       </div>`;
+      // Always show open button even for informational firewall status
+      const allPorts=Object.keys(d.ports||{}).map(Number).filter(Boolean);
+      if(allPorts.length){
+        html += `<button id="fw-open-action-btn" class="fw-open-btn"
+          onclick="openFirewall([${allPorts.join(',')}], '${inputId}')"
+          title="Attempt to automatically open these ports in your system firewall">
+          <i class="ti ti-shield-plus"></i> Open Ports in Firewall
+        </button>`;
+      }
     }
 
     // ── Warnings ──────────────────────────────────────────────────────────
@@ -3740,6 +3781,47 @@ async function checkPort(inputId, resultId){
     _showPortNotif(html);
   }catch(e){
     _showPortNotif(_portBanner('err','Check failed: '+esc(e.message||String(e))));
+  }
+}
+
+/** Open ports in system firewall via the backend API */
+async function openFirewall(ports, inputId){
+  const btn = document.getElementById('fw-open-action-btn');
+  if(btn){ btn.disabled=true; btn.innerHTML='<i class="ti ti-loader-2" style="animation:spin 0.8s linear infinite"></i> Opening…'; }
+  try{
+    const res = await fetch('/api/open_firewall',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ports}),
+    });
+    const d = await res.json();
+    const body = document.getElementById('port-notif-body');
+    if(!body) return;
+
+    if(d.ok){
+      // Replace the fw-open-btn with success banner
+      const fwBtn = document.getElementById('fw-open-action-btn');
+      if(fwBtn){
+        fwBtn.className='fw-open-btn done';
+        fwBtn.disabled=true;
+        fwBtn.innerHTML=`<i class="ti ti-shield-check"></i> Opened ${d.opened.length} port(s) — ${esc(d.msg)}`;
+      }
+      // Re-run the port check to confirm
+      setTimeout(()=>checkPort(inputId,'_'), 800);
+    } else {
+      // Show error in the panel below existing content
+      const existing = body.querySelector('.fw-err-row');
+      if(existing) existing.remove();
+      const errDiv = document.createElement('div');
+      errDiv.className='fw-err-row';
+      errDiv.innerHTML = _portBanner('err', esc(d.msg||'Firewall open failed.'))
+        + (d.hint ? `<div style="margin-top:5px;font-size:10px;color:var(--text3);font-family:var(--font-mono);background:var(--bg3);border:1px solid var(--border);border-radius:5px;padding:6px 10px;white-space:pre-wrap">${esc(d.hint)}</div>` : '');
+      body.appendChild(errDiv);
+      if(btn){ btn.disabled=false; btn.innerHTML='<i class="ti ti-shield-plus"></i> Open Ports in Firewall'; }
+    }
+  }catch(e){
+    if(btn){ btn.disabled=false; btn.innerHTML='<i class="ti ti-shield-plus"></i> Open Ports in Firewall'; }
+    _showPortNotif(_portBanner('err','Firewall request failed: '+esc(e.message||String(e))));
   }
 }
 
