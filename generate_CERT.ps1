@@ -310,9 +310,6 @@ if (-not $generated) {
 
 if ($generated) {
     Write-Section "[+] Done"
-    Write-Host "Subject should include:" -ForegroundColor White
-    Write-Host "  CN = $ipAddress" -ForegroundColor Yellow
-    Write-Host "  O  = Hydracast" -ForegroundColor Yellow
     Write-Host "  OU = created by rhshourav" -ForegroundColor Yellow
 }
 else {
