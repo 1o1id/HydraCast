@@ -89,25 +89,25 @@ _CONFIG_TEMPLATE = {
 # PATH HELPERS
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _base() -> Path:
-    from hc.constants import BASE_DIR
-    return BASE_DIR()
+def _config_dir() -> Path:
+    from hc.constants import CONFIG_DIR
+    return CONFIG_DIR()
 
 def _config_path() -> Path:
-    return _base() / "mail_config.json"
+    return _config_dir() / "mail_config.json"
 
 def _client_secret_path() -> Optional[Path]:
-    """Find any gmail_client_secret.json or client_secret_*.json in BASE_DIR."""
-    base = _base()
+    """Find any gmail_client_secret.json or client_secret_*.json in CONFIG_DIR."""
+    cfg_dir = _config_dir()
     for name in ["gmail_client_secret.json"]:
-        p = base / name
+        p = cfg_dir / name
         if p.exists():
             return p
-    matches = sorted(base.glob("client_secret_*.json"))
+    matches = sorted(cfg_dir.glob("client_secret_*.json"))
     return matches[0] if matches else None
 
 def _token_path(cfg: dict) -> Path:
-    return _base() / cfg.get("oauth2_token_file", "gmail_token.json")
+    return _config_dir() / cfg.get("oauth2_token_file", "gmail_token.json")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -512,7 +512,7 @@ def start_gmail_oauth2_flow() -> tuple[bool, str]:
     """
     Starts the OAuth2 authorization flow.
 
-    - Looks for gmail_client_secret.json (or any client_secret_*.json) in BASE_DIR.
+    - Looks for gmail_client_secret.json (or any client_secret_*.json) in CONFIG_DIR.
     - Opens a local server on a random port to catch the redirect.
     - Saves the token to gmail_token.json.
     - Returns (True, auth_url) so the Web UI can open the browser, OR
@@ -540,7 +540,7 @@ def start_gmail_oauth2_flow() -> tuple[bool, str]:
         cfg = json.loads(_config_path().read_text(encoding="utf-8"))
     except Exception:
         cfg = {}
-    token_p = _base() / cfg.get("oauth2_token_file", "gmail_token.json")
+    token_p = _config_dir() / cfg.get("oauth2_token_file", "gmail_token.json")
 
     def _run_flow() -> None:
         global _oauth2_flow_status, _oauth2_flow_error
@@ -591,7 +591,7 @@ def revoke_gmail_token() -> tuple[bool, str]:
         cfg = json.loads(_config_path().read_text(encoding="utf-8"))
         p   = _token_path(cfg)
     except Exception:
-        p = _base() / "gmail_token.json"
+        p = _config_dir() / "gmail_token.json"
 
     if p.exists():
         p.unlink()
