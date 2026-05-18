@@ -40,8 +40,13 @@ class _HydraCastHTTPServer(HTTPServer):
     allow_reuse_address = True
 
 
+_PORT_HTTPS = 443
+_PORT_HTTP  = 8080
+
 class WebServer:
-    def __init__(self, port: int = 8080) -> None:
+    def __init__(self, port: Optional[int] = None) -> None:
+        # None = auto-select: 443 when SSL is active, 8080 otherwise.
+        # Pass an explicit int to override (e.g. via --web-port).
         self._port   = port
         self._server: Optional[_HydraCastHTTPServer] = None
         self._thread: Optional[threading.Thread]     = None
@@ -98,8 +103,13 @@ class WebServer:
         cert, key = self._resolve_ssl()
         use_ssl   = cert is not None
 
+        # Auto-select port: 443 for HTTPS, 8080 for HTTP (unless explicitly overridden)
+        port = self._port if self._port is not None else (
+            _PORT_HTTPS if use_ssl else _PORT_HTTP
+        )
+
         try:
-            self._server = _HydraCastHTTPServer(("0.0.0.0", self._port), WebHandler)
+            self._server = _HydraCastHTTPServer(("0.0.0.0", port), WebHandler)
 
             if use_ssl:
                 ctx = self._make_ssl_context(cert, key)
@@ -109,10 +119,10 @@ class WebServer:
                 )
                 log.info(
                     "Web UI (HTTPS) → https://0.0.0.0:%d  [cert: %s]",
-                    self._port, cert,
+                    port, cert,
                 )
             else:
-                log.info("Web UI (HTTP) → http://0.0.0.0:%d", self._port)
+                log.info("Web UI (HTTP) → http://0.0.0.0:%d", port)
 
             self._thread = threading.Thread(
                 target=self._server.serve_forever,
@@ -131,7 +141,7 @@ class WebServer:
             log.error(
                 "Web UI failed to bind :%d — %s. "
                 "Try --web-port to use a different port.",
-                self._port, exc,
+                port, exc,
             )
         except Exception as exc:
             log.error("Web UI failed to start: %s", exc)
