@@ -321,7 +321,7 @@ class _FileManagerMixin:
             target = root_dir / rel_within
             safe   = _safe_in_root(target, root_dir)
             if safe is None or not safe.is_dir():
-                self._json({"error": f"Directory not found or access denied: '{rel_raw}'"}, 404)
+                self._json({"error": "Directory not found or access denied"}, 404)
                 return
         else:
             safe = root_dir
@@ -329,41 +329,40 @@ class _FileManagerMixin:
         root_label = root_dir.name or str(root_dir)
 
         try:
+            import os as _os
             dirs_out: List[Dict] = []
             files_out: List[Dict] = []
 
-            for entry in sorted(safe.iterdir(), key=lambda p: (p.is_file(), p.name.lower())):
+            try:
+                raw_entries = list(_os.scandir(safe))
+            except OSError as exc:
+                self._json({"error": f"Cannot read directory: {exc}"}, 500)
+                return
+
+            # Dirs first, then files — each alphabetically (case-insensitive)
+            raw_entries.sort(key=lambda e: (e.is_file(follow_symlinks=False), e.name.lower()))
+
+            for entry in raw_entries:
+                entry_path = Path(entry.path)
                 try:
-                    entry_rel = str(entry.relative_to(root_dir))
+                    entry_rel = str(entry_path.relative_to(root_dir))
                 except ValueError:
                     continue
                 encoded = _encode_path(root_idx, entry_rel)
 
-                if entry.is_dir():
-                    try:
-                        children = list(entry.iterdir())
-                        item_count = len(children)
-                        # Count media files in ALL subdirs for richer UI info
-                        has_media = any(
-                            c.is_file() and c.suffix.lower() in SUPPORTED_EXTS
-                            for c in children
-                        )
-                        has_subdirs = any(c.is_dir() for c in children)
-                    except OSError:
-                        item_count = 0
-                        has_media = False
-                        has_subdirs = False
+                if entry.is_dir(follow_symlinks=True):
                     dirs_out.append({
-                        "name":       entry.name,
-                        "path":       encoded,
-                        "items":      item_count,
-                        "has_media":  has_media,
-                        "has_subdirs": has_subdirs,
+                        "name":        entry.name,
+                        "path":        encoded,
+                        "items":       -1,   # lazy — skip N×iterdir() per subdir
+                        "has_media":   None,
+                        "has_subdirs": None,
                     })
-                elif entry.is_file():
-                    ext = entry.suffix.lower()
+                elif entry.is_file(follow_symlinks=True):
+                    ext = entry_path.suffix.lower()
                     try:
-                        size_b = entry.stat().st_size
+                        # DirEntry.stat() reuses the inode data from scandir (no extra syscall)
+                        size_b = entry.stat(follow_symlinks=True).st_size
                     except OSError:
                         size_b = 0
                     files_out.append({
