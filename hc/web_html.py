@@ -3169,10 +3169,10 @@ function renderConfigEditor(s){
               oninput="if(+this.value%2===0&&this.value)this.value=+this.value+1"
               title="Must be an ODD number. HLS will use this port + 1.">
             <button type="button" id="suggest-btn-cfg-port"
-              class="port-action-btn suggest"
+              class="port-icon-btn"
               onclick="suggestNextPort('cfg-port','cfg-port-check-result')"
               title="Auto-find the next free odd port and verify it">
-              <i class="ti ti-sparkles"></i> Suggest &amp; Check
+              <i class="ti ti-sparkles"></i>
             </button>
           </div>
           <div id="cfg-port-check-result" style="display:none"></div>
@@ -3580,10 +3580,10 @@ function showNewStreamForm(){
               oninput="if(+this.value%2===0&&this.value)this.value=+this.value+1"
               title="Must be an ODD number. HLS will use this port + 1 (even).">
             <button type="button" id="suggest-btn-new-port"
-              class="port-action-btn suggest"
+              class="port-icon-btn"
               onclick="suggestNextPort('new-port','new-port-check-result')"
               title="Auto-find the next free odd port and verify it">
-              <i class="ti ti-sparkles"></i> Suggest &amp; Check
+              <i class="ti ti-sparkles"></i>
             </button>
           </div>
           <div id="new-port-check-result" style="display:none"></div>
