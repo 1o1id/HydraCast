@@ -349,6 +349,10 @@ _HTML = r"""
   font-family:var(--font-mono);font-size:13px;font-weight:600;
   text-align:center;
 }
+/* Hide native browser spinner arrows on port inputs — we use our own button */
+.port-field-row input[type=number]::-webkit-outer-spin-button,
+.port-field-row input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.port-field-row input[type=number]{-moz-appearance:textfield}
 /* Icon-only square button (Suggest) */
 .port-icon-btn{
   display:inline-flex;align-items:center;justify-content:center;
@@ -3165,15 +3169,10 @@ function renderConfigEditor(s){
               oninput="if(+this.value%2===0&&this.value)this.value=+this.value+1"
               title="Must be an ODD number. HLS will use this port + 1.">
             <button type="button" id="suggest-btn-cfg-port"
-              class="port-icon-btn"
+              class="port-action-btn suggest"
               onclick="suggestNextPort('cfg-port','cfg-port-check-result')"
-              title="Auto-find next free odd port">
-              ✦
-            </button>
-            <button type="button" class="port-action-btn check"
-              onclick="checkPort('cfg-port','cfg-port-check-result')"
-              title="Check if this port is free and firewall is open">
-              <i class="ti ti-radar"></i> Check
+              title="Auto-find the next free odd port and verify it">
+              <i class="ti ti-sparkles"></i> Suggest &amp; Check
             </button>
           </div>
           <div id="cfg-port-check-result" style="display:none"></div>
@@ -3404,12 +3403,8 @@ function _parsePL(raw){
   for(let part of (raw||'').split(/[;\n]+/)){
     part=part.trim();if(!part)continue;
     let priority=0,start='00:00:00';
-    // Strip trailing #priority
-    if(part.includes('#')){const idx=part.lastIndexOf('#');const n=parseInt(part.slice(idx+1));if(!isNaN(n)){priority=n;part=part.slice(0,idx).trim();}}
-    // Strip trailing @HH:MM:SS start-position ONLY — never strip @N/ root prefix.
-    // @N/rel paths start with @<digit>/ and must NOT be treated as start-pos.
-    const startMatch=part.match(/@(\d{1,2}:\d{2}:\d{2})$/);
-    if(startMatch){start=startMatch[1];part=part.slice(0,part.lastIndexOf('@'+startMatch[1])).trim();}
+    if(part.includes('#')){const idx=part.lastIndexOf('#');const n=parseInt(part.slice(idx+1));if(!isNaN(n))priority=n;part=part.slice(0,idx).trim();}
+    if(part.includes('@')){const idx=part.lastIndexOf('@');const s=part.slice(idx+1).trim();if(/^\d{1,2}:\d{2}:\d{2}$/.test(s))start=s;part=part.slice(0,idx).trim();}
     if(part)items.push({path:part,start,priority});
   }
   return items;
@@ -3585,15 +3580,10 @@ function showNewStreamForm(){
               oninput="if(+this.value%2===0&&this.value)this.value=+this.value+1"
               title="Must be an ODD number. HLS will use this port + 1 (even).">
             <button type="button" id="suggest-btn-new-port"
-              class="port-icon-btn"
+              class="port-action-btn suggest"
               onclick="suggestNextPort('new-port','new-port-check-result')"
-              title="Auto-find next free odd port">
-              ✦
-            </button>
-            <button type="button" class="port-action-btn check"
-              onclick="checkPort('new-port','new-port-check-result')"
-              title="Check if this port is free and firewall is open">
-              <i class="ti ti-radar"></i> Check
+              title="Auto-find the next free odd port and verify it">
+              <i class="ti ti-sparkles"></i> Suggest &amp; Check
             </button>
           </div>
           <div id="new-port-check-result" style="display:none"></div>
