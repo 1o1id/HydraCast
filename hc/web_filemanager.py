@@ -257,7 +257,7 @@ class _FileManagerMixin:
             else:
                 dirs: List[Dict] = []
                 for i, root in enumerate(roots):
-                    label = "Media" if i == 0 else root.name
+                    label = root.name or str(root)
                     try:
                         item_count = sum(1 for _ in root.iterdir()) if root.is_dir() else 0
                     except OSError:
@@ -272,7 +272,7 @@ class _FileManagerMixin:
                     "path":        "",
                     "dirs":        dirs,
                     "files":       [],
-                    "breadcrumb":  [{"name": "Media", "path": ""}],
+                    "breadcrumb":  [{"name": "Roots", "path": ""}],
                     "multi_root":  True,
                     "roots_total": len(roots),
                 })
@@ -305,7 +305,7 @@ class _FileManagerMixin:
         else:
             safe = root_dir
 
-        root_label = "Media" if root_idx == 0 else root_dir.name
+        root_label = root_dir.name or str(root_dir)
 
         try:
             dirs_out: List[Dict] = []
@@ -343,13 +343,13 @@ class _FileManagerMixin:
                         "ext":       ext,
                     })
 
-            # Breadcrumb: Media > RootLabel [> sub > …]
-            # When only one root exists the top-level "Media" and the root
-            # label would both read "Media", so we collapse them into one.
-            crumbs = [{"name": "Media", "path": ""}]
+            # Breadcrumb: RootName [> sub > …]
+            # When only one root exists we skip the generic top-level crumb and
+            # go straight to the root folder name so the user sees the real name.
+            crumbs = [{"name": root_label, "path": f"@{root_idx}"}]
             if len(roots) > 1:
-                # Multi-root: always show the per-root label as a second crumb
-                crumbs.append({"name": root_label, "path": f"@{root_idx}"})
+                # Multi-root: prepend a top-level "Roots" home crumb
+                crumbs.insert(0, {"name": "Roots", "path": ""})
             if rel_within:
                 parts = Path(rel_within).parts
                 for i, part in enumerate(parts):
