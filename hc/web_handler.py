@@ -1370,7 +1370,7 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                     # Relative paths: resolve against MEDIA_DIR as fallback
                     if not _fp.is_absolute():
                         _fp = MEDIA_DIR() / _fp
-                    folder_source = _safe_path(_fp, MEDIA_DIR())
+                    folder_source = _safe_in_any_root(_fp)
                     if folder_source is None or not folder_source.is_dir():
                         raise ValueError(f"Folder not found or access denied: '{folder_source_raw}'")
                     playlist, warnings = scan_folder(folder_source, SortMode.ALPHA_FWD)
@@ -1620,7 +1620,7 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                     _fp = Path(folder_source_raw)
                     if not _fp.is_absolute():
                         _fp = MEDIA_DIR() / _fp
-                    folder_source = _safe_path(_fp, MEDIA_DIR())
+                    folder_source = _safe_in_any_root(_fp)
                     if folder_source is None or not folder_source.is_dir():
                         raise ValueError(f"Folder not found or access denied: '{folder_source_raw}'")
                     playlist, warnings = scan_folder(folder_source, SortMode.ALPHA_FWD)
