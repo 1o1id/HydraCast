@@ -1739,21 +1739,87 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                 self._json({"ok": False, "msg": str(exc)})
 
         elif action == "create_subdir":
-            raw = str(data.get("name", "")).strip()
-            if not raw or ".." in raw:
+            # Accept either:
+            #   {name: "@N/rel/path/newfolder"}  — fully encoded path
+            #   {parent: "@N/rel/path", name: "newfolder"}  — parent + leaf name
+            raw_name   = str(data.get("name",   "")).strip()
+            raw_parent = str(data.get("parent", "")).strip()
+
+            if not raw_name or ".." in raw_name:
                 self._json({"ok": False, "msg": "Invalid folder name"})
                 return
-            # Support @N/rel encoded paths (from the file manager) or plain names
-            dest_dir = _decode_upload_subdir(raw)
-            if dest_dir is None:
-                # Plain name without @N prefix — create inside current FM path or MEDIA_DIR
-                safe_name = re.sub(r'[/\\<>"|?*\x00]', '_', raw)
-                dest_dir = MEDIA_DIR() / safe_name
-                dest_dir_safe = _safe_in_root(dest_dir, MEDIA_DIR())
-                if dest_dir_safe is None:
+
+            from hc.web_filemanager import _resolve_fm_path, _decode_root, _encode_path
+
+            if raw_parent:
+                # Resolve parent first, then append the leaf folder name
+                leaf = re.sub(r'[/\\<>"|?*\x00]', "_", raw_name.lstrip("/\\"))
+                if not leaf:
+                    self._json({"ok": False, "msg": "Invalid folder name"})
+                    return
+
+                if raw_parent == "" or raw_parent == "/":
+                    # Root of default media dir
+                    dest_dir = _safe_in_root(MEDIA_DIR() / leaf, MEDIA_DIR())
+                else:
+                    resolved = _resolve_fm_path(raw_parent)
+                    if resolved is None:
+                        self._json({"ok": False, "msg": "Parent path not found or access denied"})
+                        return
+                    root_dir, parent_abs = resolved
+                    if not parent_abs.is_dir():
+                        self._json({"ok": False, "msg": "Parent is not a directory"})
+                        return
+                    candidate = parent_abs / leaf
+                    dest_dir = _safe_in_root(candidate, root_dir)
+
+                if dest_dir is None:
                     self._json({"ok": False, "msg": "Path traversal denied"})
                     return
-                dest_dir = dest_dir_safe
+
+            elif raw_name.startswith("@"):
+                # Fully encoded @N/rel/newfolder
+                # Split off the last segment as the new leaf name
+                parts = raw_name.rsplit("/", 1)
+                if len(parts) == 2:
+                    parent_enc, leaf = parts[0], parts[1]
+                else:
+                    # e.g. "@0" with no slash — create a dir directly inside root 0
+                    parent_enc, leaf = raw_name, ""
+
+                leaf = re.sub(r'[/\\<>"|?*\x00]', "_", leaf)
+
+                if parent_enc:
+                    decoded = _decode_root(parent_enc)
+                    if decoded is None:
+                        self._json({"ok": False, "msg": "Invalid encoded path"})
+                        return
+                    _, root_dir, rel_within = decoded
+                    try:
+                        root_dir = root_dir.resolve()
+                    except Exception:
+                        pass
+                    parent_abs = root_dir / rel_within if rel_within else root_dir
+                    if not leaf:
+                        self._json({"ok": False, "msg": "Folder name is required"})
+                        return
+                    candidate = parent_abs / leaf
+                    dest_dir  = _safe_in_root(candidate, root_dir)
+                else:
+                    dest_dir = None
+
+                if dest_dir is None:
+                    self._json({"ok": False, "msg": "Path traversal denied"})
+                    return
+
+            else:
+                # Plain name — create inside MEDIA_DIR
+                safe_name = re.sub(r'[/\\<>"|?*\x00]', "_", raw_name)
+                dest_dir  = _safe_in_root(MEDIA_DIR() / safe_name, MEDIA_DIR())
+                if dest_dir is None:
+                    self._json({"ok": False, "msg": "Path traversal denied"})
+                    return
+
             try:
                 dest_dir.mkdir(parents=True, exist_ok=True)
                 self._json({"ok": True, "msg": f"Created: {dest_dir.name}"})
