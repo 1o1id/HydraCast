@@ -3404,8 +3404,12 @@ function _parsePL(raw){
   for(let part of (raw||'').split(/[;\n]+/)){
     part=part.trim();if(!part)continue;
     let priority=0,start='00:00:00';
-    if(part.includes('#')){const idx=part.lastIndexOf('#');const n=parseInt(part.slice(idx+1));if(!isNaN(n))priority=n;part=part.slice(0,idx).trim();}
-    if(part.includes('@')){const idx=part.lastIndexOf('@');const s=part.slice(idx+1).trim();if(/^\d{1,2}:\d{2}:\d{2}$/.test(s))start=s;part=part.slice(0,idx).trim();}
+    // Strip trailing #priority
+    if(part.includes('#')){const idx=part.lastIndexOf('#');const n=parseInt(part.slice(idx+1));if(!isNaN(n)){priority=n;part=part.slice(0,idx).trim();}}
+    // Strip trailing @HH:MM:SS start-position ONLY — never strip @N/ root prefix.
+    // @N/rel paths start with @<digit>/ and must NOT be treated as start-pos.
+    const startMatch=part.match(/@(\d{1,2}:\d{2}:\d{2})$/);
+    if(startMatch){start=startMatch[1];part=part.slice(0,part.lastIndexOf('@'+startMatch[1])).trim();}
     if(part)items.push({path:part,start,priority});
   }
   return items;
