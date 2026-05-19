@@ -5356,162 +5356,286 @@ let _fmOp          = null;   // {action, path, name, isDir}
 let _fmAllDirs     = [];     // flat list of all subdir paths for move/copy selects
 
 async function loadFiles(path) {
-  _fmCurrentPath = path || '';
+  _fmCurrentPath = (path === undefined || path === null) ? '' : String(path);
   const body   = document.getElementById('fm-body');
   const status = document.getElementById('fm-status');
+  if (!body) return;
   body.innerHTML = '<div class="fm-empty"><div class="empty-icon" style="animation:spin 1.2s linear infinite">⟳</div></div>';
-  status.textContent = 'Loading…';
+  if (status) status.textContent = 'Loading…';
+
   try {
-    const d = await fetch('/api/files?path=' + encodeURIComponent(_fmCurrentPath)).then(r => r.json());
+    // ── Fetch current directory + root listing in parallel ──────────────
+    const [d, rootResp] = await Promise.all([
+      fetch('/api/files?path=' + encodeURIComponent(_fmCurrentPath)).then(r => r.json()),
+      _fmCurrentPath
+        ? fetch('/api/files?path=').then(r => r.json()).catch(() => ({ dirs: [], multi_root: false }))
+        : Promise.resolve(null),
+    ]);
+
     if (d.error) {
-      body.innerHTML = `<div class="fm-empty"><div class="empty-icon">⚠</div><div>${d.error}</div></div>`;
-      status.textContent = 'Error';
+      body.innerHTML = `<div class="fm-empty"><div class="empty-icon">⚠</div><div>${_fmEsc(d.error)}</div></div>`;
+      if (status) status.textContent = 'Error';
       return;
     }
 
-    // ── Breadcrumb ──────────────────────────────────────────────
+    // ── Breadcrumb ──────────────────────────────────────────────────────
     const bc = document.getElementById('fm-breadcrumb');
-    bc.innerHTML = d.breadcrumb.map((crumb, i) => {
-      const isLast = i === d.breadcrumb.length - 1;
-      return (i > 0 ? '<span class="fm-sep">›</span>' : '') +
-        `<span onclick="loadFiles('${crumb.path}')"
-               class="${isLast ? 'fm-cur' : ''}">${crumb.name}</span>`;
-    }).join('');
+    if (bc) {
+      bc.innerHTML = (d.breadcrumb || [{ name: 'Files', path: '' }]).map((crumb, i, arr) => {
+        const isLast = (i === arr.length - 1);
+        const sep    = i > 0 ? '<span class="fm-sep">›</span>' : '';
+        // Use data-fmpath attribute — avoids JS injection from path strings
+        return sep + `<span data-fmpath="${_fmAttr(crumb.path)}"
+             class="${isLast ? 'fm-cur' : ''}">${_fmEsc(crumb.name)}</span>`;
+      }).join('');
+      // Delegated click so paths with apostrophes/special chars work
+      bc.onclick = (e) => {
+        const sp = e.target.closest('[data-fmpath]');
+        if (sp) loadFiles(sp.dataset.fmpath);
+      };
+    }
 
-    // ── Sidebar rebuild (multi-root aware) ────────────────────
-    //
-    // Three cases the backend can return:
-    //   (A) multi_root:true, path='' — show each root as a top-level drive
-    //   (B) single root, path=''    — backend auto-entered @0; show @0's subdirs
-    //   (C) inside a root           — fetch path='' to discover roots for sidebar
-    _fmAllDirs = [''];          // '' always means 'top of everything'
-    _fmRootMeta = [];           // [{path, label}] for _fmPopulateDirSelect
+    // ── Sidebar rebuild ─────────────────────────────────────────────────
+    // rootData: the top-level listing (may be d itself when _fmCurrentPath='')
+    const rootData   = rootResp || d;
+    const isMultiRoot = rootData.multi_root === true;
+
+    _fmAllDirs   = [''];
+    _fmRootMeta  = [];
+
     const sidebar = document.getElementById('fm-dir-list');
+    if (sidebar) {
+      // Top-level "root" button
+      const _rootTopLabel =
+        (rootData.breadcrumb && rootData.breadcrumb[0])
+          ? rootData.breadcrumb[0].name
+          : (isMultiRoot ? 'Roots' : 'Files');
+      const _rlEl = document.getElementById('fm-root-label');
+      if (_rlEl) _rlEl.textContent = _rootTopLabel;
 
-    // Always fetch path='' once to build the sidebar root list.
-    // (If we are already at path='', re-use d directly.)
-    let rootResp = d;
-    if (_fmCurrentPath !== '') {
-      try {
-        rootResp = await fetch('/api/files?path=').then(r => r.json());
-      } catch(_) { rootResp = { dirs: [], multi_root: false }; }
+      // Build breadcrumb ancestry set so we can highlight active trail
+      const activeCrumbs = new Set(
+        (d.breadcrumb || []).map(c => c.path).filter(p => p !== '')
+      );
+      activeCrumbs.add(_fmCurrentPath);
+
+      sidebar.innerHTML =
+        `<div class="fm-dir-item${_fmCurrentPath === '' ? ' active' : ''}"
+              data-fmpath=""
+              title="${_fmAttr(_rootTopLabel)}">
+           <span class="fm-dir-icon">📁</span> ${_fmEsc(_rootTopLabel)}
+         </div>`;
+
+      if (isMultiRoot) {
+        // Show each root drive
+        (rootData.dirs || []).forEach(root => {
+          const isActive = _fmCurrentPath === root.path
+                        || _fmCurrentPath.startsWith(root.path + '/');
+          _fmAllDirs.push(root.path);
+          _fmRootMeta.push({ path: root.path, label: root.name });
+          sidebar.insertAdjacentHTML('beforeend',
+            `<div class="fm-dir-item${isActive ? ' active' : ''}"
+                  data-fmpath="${_fmAttr(root.path)}"
+                  title="${_fmAttr(root.path)}">
+               <span class="fm-dir-icon">📁</span> ${_fmEsc(root.name)}
+             </div>`);
+        });
+      } else {
+        // Single-root: show immediate subdirs of root in sidebar
+        const sidebarDirs = rootData.dirs || [];
+        const seen = new Set();
+        sidebarDirs.forEach(dir => {
+          if (seen.has(dir.path)) return;
+          seen.add(dir.path);
+          _fmAllDirs.push(dir.path);
+          _fmRootMeta.push({ path: dir.path, label: dir.name });
+
+          const isActive = activeCrumbs.has(dir.path)
+                        || _fmCurrentPath === dir.path
+                        || _fmCurrentPath.startsWith(dir.path + '/');
+
+          // If we're inside this dir, show its children in the sidebar too
+          const subDirsHtml = _fmBuildSidebarSubs(dir, d, activeCrumbs, 1);
+
+          sidebar.insertAdjacentHTML('beforeend',
+            `<div class="fm-dir-item${isActive ? ' active' : ''}"
+                  data-fmpath="${_fmAttr(dir.path)}"
+                  title="${_fmAttr(dir.path)}">
+               <span class="fm-dir-icon">📂</span> ${_fmEsc(dir.name)}
+             </div>
+             ${subDirsHtml}`);
+        });
+      }
+
+      // Delegated click for sidebar
+      sidebar.onclick = (e) => {
+        const item = e.target.closest('[data-fmpath]');
+        if (item && item.dataset.fmpath !== undefined) {
+          loadFiles(item.dataset.fmpath);
+        }
+      };
     }
 
-    const isMultiRoot = rootResp.multi_root === true;
+    // ── Populate move/copy dir selects with ALL visible paths ───────────
+    // Merge sidebar dirs + current dir's sub-dirs
+    (d.dirs || []).forEach(dir => {
+      if (!_fmAllDirs.includes(dir.path)) _fmAllDirs.push(dir.path);
+    });
 
-    // Top-level root button — label comes from the API (breadcrumb[0].name),
-    // falling back to 'Files' so the UI is never blank.
-    const _rootTopLabel = (rootResp.breadcrumb && rootResp.breadcrumb[0])
-                           ? rootResp.breadcrumb[0].name
-                           : (isMultiRoot ? 'Roots' : 'Files');
-    // Update the static placeholder span too (only matters on very first load)
-    const _rlEl = document.getElementById('fm-root-label');
-    if (_rlEl) _rlEl.textContent = _rootTopLabel;
-    sidebar.innerHTML =
-      `<div class="fm-dir-item${_fmCurrentPath === '' ? ' active' : ''}" onclick="loadFiles('')">`+
-      `<span class="fm-dir-icon">📁</span> ${_rootTopLabel}</div>`;
-
-    if (isMultiRoot) {
-      // Show each root as a drive entry
-      (rootResp.dirs || []).forEach(root => {
-        const isActive = _fmCurrentPath === root.path ||
-                          _fmCurrentPath.startsWith(root.path + '/');
-        _fmAllDirs.push(root.path);
-        _fmRootMeta.push({ path: root.path, label: root.name });
-        sidebar.insertAdjacentHTML('beforeend',
-          `<div class="fm-dir-item${isActive ? ' active' : ''}" onclick="loadFiles('${root.path}')">`+
-          `<span class="fm-dir-icon">📁</span> ${root.name}</div>`);
-      });
-    } else {
-      // Single-root mode: show @0's immediate subdirs in the sidebar
-      const sidebarDirs = rootResp.dirs || [];
-      const seenSidebar = new Set();
-      sidebarDirs.forEach(dir => {
-        if (seenSidebar.has(dir.path)) return;
-        seenSidebar.add(dir.path);
-        _fmAllDirs.push(dir.path);
-        _fmRootMeta.push({ path: dir.path, label: dir.name });
-        sidebar.insertAdjacentHTML('beforeend',
-          `<div class="fm-dir-item${dir.path === _fmCurrentPath ? ' active' : ''}" onclick="loadFiles('${dir.path}')">`+
-          `<span class="fm-dir-icon">📂</span> ${dir.name}</div>`);
-      });
-    }
-
-    // ── Body rows ───────────────────────────────────────────────
+    // ── Body rows ───────────────────────────────────────────────────────
     const rows = [];
 
-    // Folders first
-    d.dirs.forEach(dir => {
-      rows.push(`
-        <div class="fm-row">
-          <span class="fm-row-icon">📁</span>
-          <span class="fm-row-name is-dir" ondblclick="loadFiles('${dir.path}')"
-                onclick="loadFiles('${dir.path}')">${dir.name}</span>
-          <span class="fm-row-meta">${dir.items} item${dir.items!==1?'s':''}</span>
-          <div class="fm-row-actions">
-            <button class="fm-action-btn"
-                    title="Rename this folder"
-                    onclick="fmStartRename('${dir.path}','${dir.name}',true)">✏ Rename</button>
-            <button class="fm-action-btn mv"
-                    title="Move this folder to a different location"
-                    onclick="fmStartMove('${dir.path}','${dir.name}',true)">↗ Move</button>
-            <button class="fm-action-btn del"
-                    title="Permanently delete this folder and all its contents"
-                    onclick="fmDeleteDir('${dir.path}','${dir.name}')">🗑 Delete</button>
-          </div>
-        </div>`);
+    // Folders
+    (d.dirs || []).forEach(dir => {
+      const subInfo = dir.has_subdirs
+        ? `<span style="font-size:9px;color:var(--text3);margin-left:3px" title="Contains subdirectories">▸</span>` : '';
+      const mediaInfo = dir.has_media
+        ? `<span style="font-size:9px;color:var(--green);margin-left:3px" title="Contains media files">🎬</span>` : '';
+      rows.push(
+        `<div class="fm-row" data-row-type="dir" data-row-path="${_fmAttr(dir.path)}" data-row-name="${_fmAttr(dir.name)}">
+           <span class="fm-row-icon">📁</span>
+           <span class="fm-row-name is-dir">${_fmEsc(dir.name)}${subInfo}${mediaInfo}</span>
+           <span class="fm-row-meta">${dir.items} item${dir.items !== 1 ? 's' : ''}</span>
+           <div class="fm-row-actions">
+             <button class="fm-action-btn" data-action="rename" title="Rename this folder">✏ Rename</button>
+             <button class="fm-action-btn mv"  data-action="move"   title="Move this folder">↗ Move</button>
+             <button class="fm-action-btn del" data-action="deldir" title="Delete this folder and all contents">🗑 Delete</button>
+           </div>
+         </div>`
+      );
     });
 
     // Files
-    d.files.forEach(f => {
-      const ico = f.ext.match(/\.(mp3|aac|flac|wav|ogg|m4a)$/i) ? '🎵' : '🎬';
+    (d.files || []).forEach(f => {
+      const ico = /\.(mp3|aac|flac|wav|ogg|m4a)$/i.test(f.ext) ? '🎵' : '🎬';
       const sup = f.supported
-        ? `<span style="font-size:10px;color:var(--green);margin-left:4px">✓</span>`
+        ? `<span style="font-size:10px;color:var(--green);margin-left:4px" title="Supported format">✓</span>`
         : `<span style="font-size:10px;color:var(--text3);margin-left:4px" title="Unsupported format">—</span>`;
-      rows.push(`
-        <div class="fm-row">
-          <span class="fm-row-icon">${ico}</span>
-          <span class="fm-row-name">${f.name}${sup}</span>
-          <span class="fm-row-meta">${f.size}</span>
-          <div class="fm-row-actions">
-            <button class="fm-action-btn"
-                    title="Rename this file"
-                    onclick="fmStartRename('${f.path}','${f.name}',false)">✏ Rename</button>
-            <button class="fm-action-btn mv"
-                    title="Move this file to a different folder"
-                    onclick="fmStartMove('${f.path}','${f.name}',false)">↗ Move</button>
-            <button class="fm-action-btn cp"
-                    title="Copy this file to another folder"
-                    onclick="fmStartCopy('${f.path}','${f.name}')">⎘ Copy</button>
-            <button class="fm-action-btn del"
-                    title="Permanently delete this file"
-                    onclick="fmDelete('${f.path}','${f.name}')">🗑 Delete</button>
-          </div>
-        </div>`);
+      rows.push(
+        `<div class="fm-row" data-row-type="file" data-row-path="${_fmAttr(f.path)}" data-row-name="${_fmAttr(f.name)}">
+           <span class="fm-row-icon">${ico}</span>
+           <span class="fm-row-name">${_fmEsc(f.name)}${sup}</span>
+           <span class="fm-row-meta">${_fmEsc(f.size)}</span>
+           <div class="fm-row-actions">
+             <button class="fm-action-btn" data-action="rename" title="Rename this file">✏ Rename</button>
+             <button class="fm-action-btn mv"  data-action="move" title="Move this file">↗ Move</button>
+             <button class="fm-action-btn cp"  data-action="copy" title="Copy this file">⎘ Copy</button>
+             <button class="fm-action-btn del" data-action="del"  title="Delete this file">🗑 Delete</button>
+           </div>
+         </div>`
+      );
     });
 
     if (!rows.length) {
       body.innerHTML = '<div class="fm-empty"><div class="empty-icon">📂</div><div>This folder is empty.</div></div>';
     } else {
       body.innerHTML = rows.join('');
+      // ── Single delegated event listener for all row actions ─────────
+      body.onclick = (e) => {
+        // Navigate into dir by clicking its name
+        const nameSp = e.target.closest('.fm-row-name.is-dir');
+        if (nameSp) {
+          const row = nameSp.closest('[data-row-path]');
+          if (row) { loadFiles(row.dataset.rowPath); return; }
+        }
+
+        // Action buttons
+        const btn = e.target.closest('[data-action]');
+        if (!btn) return;
+        const row = btn.closest('[data-row-path]');
+        if (!row) return;
+        const path  = row.dataset.rowPath;
+        const name  = row.dataset.rowName;
+        const isDir = row.dataset.rowType === 'dir';
+        const action = btn.dataset.action;
+
+        if (action === 'rename') { fmStartRename(path, name, isDir); }
+        else if (action === 'move')   { fmStartMove(path, name, isDir); }
+        else if (action === 'copy')   { fmStartCopy(path, name); }
+        else if (action === 'del')    { fmDelete(path, name); }
+        else if (action === 'deldir') { fmDeleteDir(path, name); }
+      };
     }
 
-    const total = d.dirs.length + d.files.length;
+    // ── Status bar ──────────────────────────────────────────────────────
     const _pathLabel = _fmCurrentPath
       ? (d.root_label
           ? d.root_label + (_fmCurrentPath.includes('/') ? '/' + _fmCurrentPath.split('/').slice(1).join('/') : '')
           : _fmCurrentPath)
-      : _rootTopLabel;
-    status.innerHTML =
-      `<b>${d.dirs.length}</b> folder${d.dirs.length!==1?'s':''}&nbsp;&nbsp;` +
-      `<b>${d.files.length}</b> file${d.files.length!==1?'s':''}&ensp;·&ensp;` +
-      `<span style="color:var(--accent-light)">${_pathLabel}</span>`;
+      : ((d.breadcrumb && d.breadcrumb[0]) ? d.breadcrumb[0].name : 'Media');
+    if (status) status.innerHTML =
+      `<b>${(d.dirs || []).length}</b> folder${(d.dirs || []).length !== 1 ? 's' : ''}&nbsp;&nbsp;` +
+      `<b>${(d.files || []).length}</b> file${(d.files || []).length !== 1 ? 's' : ''}&ensp;·&ensp;` +
+      `<span style="color:var(--accent-light)">${_fmEsc(_pathLabel)}</span>`;
 
   } catch(e) {
-    body.innerHTML = `<div class="fm-empty"><div class="empty-icon">⚠</div><div>Load failed: ${e.message}</div></div>`;
-    status.textContent = 'Error';
+    body.innerHTML = `<div class="fm-empty"><div class="empty-icon">⚠</div><div>Load failed: ${_fmEsc(e.message)}</div></div>`;
+    if (status) status.textContent = 'Error';
   }
 }
+
+/** Escape for HTML text content */
+function _fmEsc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+/** Escape for HTML attribute values (double-quoted) */
+function _fmAttr(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+/** Escape a path string for use inside a single-quoted JS onclick attribute */
+function _fmEscPath(s) {
+  return String(s ?? '').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+}
+
+
+/**
+ * Build sidebar sub-directory entries for dirs that are ancestors of the
+ * current path (so the open trail is always visible in the sidebar).
+ *
+ * @param {Object} dir      - The parent dir object {path, name, items}
+ * @param {Object} currentD - The API response for the currently viewed dir
+ * @param {Set}    activeCrumbs - Set of path strings in the current breadcrumb
+ * @param {number} depth    - Indentation depth
+ */
+function _fmBuildSidebarSubs(dir, currentD, activeCrumbs, depth) {
+  // Only expand if this dir is an ancestor of the current path
+  const isAncestor = _fmCurrentPath === dir.path
+                  || _fmCurrentPath.startsWith(dir.path + '/');
+  if (!isAncestor || depth > 6) return '';
+
+  // Use the current dir's subdir listing when we are inside it;
+  // otherwise we don't have sub-listing data (avoid extra API calls).
+  let subs = [];
+  if (_fmCurrentPath === dir.path) {
+    subs = currentD.dirs || [];
+  } else if (_fmCurrentPath.startsWith(dir.path + '/')) {
+    // The current response's breadcrumb tells us the next level crumb
+    // We render only breadcrumb crumbs we know about
+    const nextCrumb = (currentD.breadcrumb || []).find(c =>
+      c.path !== dir.path && c.path.startsWith(dir.path + '/') &&
+      !c.path.slice(dir.path.length + 1).includes('/')
+    );
+    if (nextCrumb) subs = [{ path: nextCrumb.path, name: nextCrumb.name, items: '…' }];
+  }
+
+  if (!subs.length) return '';
+  const indent = depth * 14;
+  return subs.map(sub => {
+    if (!_fmAllDirs.includes(sub.path)) _fmAllDirs.push(sub.path);
+    const isActive = _fmCurrentPath === sub.path
+                  || _fmCurrentPath.startsWith(sub.path + '/');
+    const childSubs = _fmBuildSidebarSubs(sub, currentD, activeCrumbs, depth + 1);
+    return `<div class="fm-dir-item${isActive ? ' active' : ''}"
+                  data-fmpath="${_fmAttr(sub.path)}"
+                  style="padding-left:${16 + indent}px"
+                  title="${_fmAttr(sub.path)}">
+               <span class="fm-dir-icon">📂</span> ${_fmEsc(sub.name)}
+             </div>
+             ${childSubs}`;
+  }).join('');
+}
+
 
 // ── New folder ────────────────────────────────────────────────
 async function fmNewFolder() {
