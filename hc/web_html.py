@@ -3170,10 +3170,10 @@ function renderConfigEditor(s){
               title="Auto-find next free odd port">
               ✦
             </button>
-            <button type="button" class="port-action-btn check"
+            <button type="button" class="port-icon-btn"
               onclick="checkPort('cfg-port','cfg-port-check-result')"
               title="Check if this port is free and firewall is open">
-              <i class="ti ti-radar"></i> Check
+              <i class="ti ti-radar"></i>
             </button>
           </div>
           <div id="cfg-port-check-result" style="display:none"></div>
@@ -3586,10 +3586,10 @@ function showNewStreamForm(){
               title="Auto-find next free odd port">
               ✦
             </button>
-            <button type="button" class="port-action-btn check"
+            <button type="button" class="port-icon-btn"
               onclick="checkPort('new-port','new-port-check-result')"
               title="Check if this port is free and firewall is open">
-              <i class="ti ti-radar"></i> Check
+              <i class="ti ti-radar"></i>
             </button>
           </div>
           <div id="new-port-check-result" style="display:none"></div>
@@ -3723,7 +3723,11 @@ function switchNewSrcTab(mode){
 async function suggestNextPort(inputId, resultId){
   const inp = document.getElementById(inputId);
   if(!inp) return;
-  const from = parseInt(inp.value||0)||8555;
+  // Always start 2 above the current value so the button advances to a
+  // genuinely *next* free port instead of returning the same port when
+  // the current one happens to be free already.
+  const cur = parseInt(inp.value||0)||8553;
+  const from = cur + 2;
   const suggestBtn = document.getElementById('suggest-btn-'+inputId);
   if(suggestBtn){
     suggestBtn._origHTML = suggestBtn.innerHTML;
