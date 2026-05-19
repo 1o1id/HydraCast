@@ -1357,7 +1357,7 @@ select option{background:var(--bg3)}
         <div style="padding:10px 14px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text3);background:var(--bg3);border-bottom:1px solid var(--border);font-family:var(--font-display)">Folders</div>
         <div class="fm-dir-list" id="fm-dir-list" style="flex:1;overflow-y:auto">
           <div class="fm-dir-item active" onclick="loadFiles('')">
-            <span class="fm-dir-icon">📁</span> Media
+            <span class="fm-dir-icon">📁</span> <span id="fm-root-label">Files</span>
           </div>
         </div>
       </div>
@@ -1367,7 +1367,7 @@ select option{background:var(--bg3)}
         <!-- Breadcrumb + toolbar -->
         <div style="padding:9px 14px;background:var(--bg3);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <div class="fm-breadcrumb" id="fm-breadcrumb" style="flex:1;min-width:0">
-            <span onclick="loadFiles('')">Media</span>
+            <span onclick="loadFiles('')" id="fm-breadcrumb-root">Files</span>
           </div>
         </div>
         <!-- File rows -->
@@ -4062,7 +4062,7 @@ async function _mbLoad(path) {
 
     // ── Breadcrumb ────────────────────────────────────────────
     const bc = document.getElementById('mb-breadcrumb');
-    bc.innerHTML = (data.breadcrumb || [{name:'Media', path:''}]).map((crumb, i, arr) => {
+    bc.innerHTML = (data.breadcrumb || [{name:'Files', path:''}]).map((crumb, i, arr) => {
       const isLast = i === arr.length - 1;
       const sep = i > 0 ? '<span style="opacity:0.4;font-size:10px;padding:0 2px">›</span>' : '';
       return sep + `<span onclick="_mbLoad('${crumb.path}')"
@@ -4083,8 +4083,8 @@ async function _mbLoad(path) {
                    ${!path ? 'background:rgba(184,115,51,0.09);border-left:2px solid var(--accent);padding-left:12px;color:var(--accent)' : 'color:var(--text2)'}"
             onmouseover="this.style.background='var(--bg3)'"
             onmouseout="this.style.background='${!path?'rgba(184,115,51,0.09)':''}'"
-            title="Media root directory">
-         <span style="opacity:0.65">📁</span> Media
+            title="Root directory">
+         <span style="opacity:0.65">📁</span> ${(data.breadcrumb && data.breadcrumb[0]) ? esc(data.breadcrumb[0].name) : 'Files'}
        </div>` +
       (_mb.rootDirs.length ? _mb.rootDirs : rootDirs).map(d => {
         const isActive = path === d.path || path.startsWith(d.path + '/');
@@ -4105,7 +4105,7 @@ async function _mbLoad(path) {
 
     // In folder mode: the current dir is itself selectable
     if (isFolderMode) {
-      const curLabel = path ? (data.breadcrumb || []).slice(-1)[0]?.name || path.split('/').pop() : 'Media';
+      const curLabel = path ? (data.breadcrumb || []).slice(-1)[0]?.name || path.split('/').pop() : ((data.breadcrumb && data.breadcrumb[0]) ? data.breadcrumb[0].name : 'Files');
       rows.push(`
         <div onclick="_mbSelectRow(this, {path:'${esc(path)}', isDir:true})"
              ondblclick="_mbSelectRow(this,{path:'${esc(path)}',isDir:true});mbConfirm()"
@@ -4369,7 +4369,8 @@ async function ssRefreshFolders() {
   try {
     const root = await fetch('/api/files?path=').then(r => r.json());
     const dirs = root.dirs || [];
-    sel.innerHTML = '<option value="">— Media root (all files) —</option>' +
+    const _rootName = (root.breadcrumb && root.breadcrumb[0]) ? root.breadcrumb[0].name : 'Root';
+    sel.innerHTML = `<option value="">— ${_rootName} (all files) —</option>` +
       dirs.map(d => `<option value="${esc(d.path)}">${esc(d.name)}</option>`).join('');
   } catch(e) {
     sel.innerHTML = '<option value="">Failed to load folders</option>';
@@ -5387,10 +5388,17 @@ async function loadFiles(path) {
 
     const isMultiRoot = rootResp.multi_root === true;
 
-    // Top-level 'Media' button always navigates to ''
+    // Top-level root button — label comes from the API (breadcrumb[0].name),
+    // falling back to 'Files' so the UI is never blank.
+    const _rootTopLabel = (rootResp.breadcrumb && rootResp.breadcrumb[0])
+                           ? rootResp.breadcrumb[0].name
+                           : (isMultiRoot ? 'Roots' : 'Files');
+    // Update the static placeholder span too (only matters on very first load)
+    const _rlEl = document.getElementById('fm-root-label');
+    if (_rlEl) _rlEl.textContent = _rootTopLabel;
     sidebar.innerHTML =
       `<div class="fm-dir-item${_fmCurrentPath === '' ? ' active' : ''}" onclick="loadFiles('')">`+
-      `<span class="fm-dir-icon">📁</span> Media</div>`;
+      `<span class="fm-dir-icon">📁</span> ${_rootTopLabel}</div>`;
 
     if (isMultiRoot) {
       // Show each root as a drive entry
@@ -5482,7 +5490,7 @@ async function loadFiles(path) {
       ? (d.root_label
           ? d.root_label + (_fmCurrentPath.includes('/') ? '/' + _fmCurrentPath.split('/').slice(1).join('/') : '')
           : _fmCurrentPath)
-      : 'Media';
+      : _rootTopLabel;
     status.innerHTML =
       `<b>${d.dirs.length}</b> folder${d.dirs.length!==1?'s':''}&nbsp;&nbsp;` +
       `<b>${d.files.length}</b> file${d.files.length!==1?'s':''}&ensp;·&ensp;` +
@@ -5565,7 +5573,9 @@ async function fmDoCopy() {
 // ── Dir select helper ─────────────────────────────────────────
 function _fmPopulateDirSelect(selectId, excludePath) {
   const sel = document.getElementById(selectId);
-  sel.innerHTML = '<option value="">Media (top)</option>';
+  const _rlEl2 = document.getElementById('fm-root-label');
+  const _topLabel = (_rlEl2 && _rlEl2.textContent) ? _rlEl2.textContent + ' (top)' : 'Root (top)';
+  sel.innerHTML = `<option value="">${_topLabel}</option>`;
   // Build a label map from _fmRootMeta (populated by loadFiles).
   const labelMap = {};
   (_fmRootMeta || []).forEach(m => { labelMap[m.path] = m.label; });
