@@ -1864,6 +1864,38 @@ select option{background:var(--bg3)}
     </div>
   </div>
 
+  <!-- Media Root Directories -->
+  <div style="margin-top:4px" id="media-roots-section">
+    <div class="section-hdr">
+      <h2>Media Root Directories</h2><span class="sep"></span>
+      <button class="btn b" onclick="loadMediaRoots()" title="Reload root directories from server">↻ Load</button>
+    </div>
+    <div class="card card-body" style="padding:16px">
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.7">
+        HydraCast scans these directories for media files shown in the
+        <b>Library</b> and available to streams.
+        The <b>default root</b> (<code id="mr-default-path" style="color:var(--accent-light)">media/</code>) is always active and cannot be removed.
+        Extra roots must be absolute paths on the server.
+      </div>
+
+      <!-- Root list -->
+      <div id="mr-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px"></div>
+
+      <!-- Add new root row -->
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="mr-new-path" type="text"
+          placeholder="/absolute/path/to/extra/media"
+          style="flex:1;min-width:220px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px 11px;border-radius:var(--radius);font-size:12px;font-family:var(--font-mono);outline:none;transition:border-color 0.2s"
+          onfocus="this.style.borderColor='var(--accent)'"
+          onblur="this.style.borderColor='var(--border)'"
+          onkeydown="if(event.key==='Enter')addMediaRoot()"
+          title="Absolute server-side path to add as a media root">
+        <button class="btn g" onclick="addMediaRoot()" title="Add this directory as an extra media root">+ Add Root</button>
+      </div>
+      <div id="mr-status" style="font-size:11px;color:var(--text3);margin-top:8px"></div>
+    </div>
+  </div>
+
   <!-- Backup & Restore -->
   <div style="margin-top:4px">
     <div class="section-hdr"><h2>Backup &amp; Restore</h2><span class="sep"></span></div>
@@ -1881,6 +1913,7 @@ select option{background:var(--bg3)}
               <li>Mail alert config (mail_config.json)</li>
               <li>Resume positions (resume_positions.json)</li>
               <li>App settings (holiday country, etc.)</li>
+              <li>Media root directory list (media_roots.json)</li>
             </ul>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">
@@ -1898,6 +1931,9 @@ select option{background:var(--bg3)}
             </label>
             <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text2);text-transform:none;letter-spacing:0;cursor:pointer">
               <input type="checkbox" id="bk-app-settings" checked style="width:auto;accent-color:var(--accent)" title="Include app settings (holiday country, etc.) in the backup"> App settings
+            </label>
+            <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text2);text-transform:none;letter-spacing:0;cursor:pointer">
+              <input type="checkbox" id="bk-media-roots" checked style="width:auto;accent-color:var(--accent)" title="Include extra media root directory paths in the backup"> Media roots
             </label>
           </div>
           <button class="btn g" onclick="downloadBackup()" title="Download a .hc backup file containing the selected configuration">⬇ Download Backup</button>
@@ -2131,7 +2167,7 @@ function _doSwitchTab(name,btn){
   else if(name==='events'){if(!_hdLoaded)loadHolidays();}
   else if(name==='viewer'){loadViewer();}
   else if(name==='config'){loadConfig();}
-  else if(name==='settings'){updateSysInfo();loadMailConfig();ssInit();loadHolidaySettings();loadCustomHolidays();}
+  else if(name==='settings'){updateSysInfo();loadMailConfig();ssInit();loadHolidaySettings();loadCustomHolidays();loadMediaRoots();}
 }
 
 // ═══════════════════════════════════
@@ -4718,6 +4754,140 @@ async function revokeMicrosoft(){
 }
 
 // ═══════════════════════════════════
+// MEDIA ROOT DIRECTORIES
+// ═══════════════════════════════════
+
+// Tracks the current roots array in-memory so UI renders without extra round-trips
+let _mrRoots = [];
+let _mrDefault = '';
+
+async function loadMediaRoots(){
+  try{
+    const r = await fetch('/api/media_roots');
+    if(!r.ok) throw new Error('Server error '+r.status);
+    const d = await r.json();
+    _mrRoots   = d.roots   || [];
+    _mrDefault = d.default || '';
+    const el = document.getElementById('mr-default-path');
+    if(el) el.textContent = _mrDefault || 'media/';
+    _renderMediaRoots();
+  }catch(e){
+    _mrStatus('Failed to load roots: '+e.message, 'err');
+  }
+}
+
+function _renderMediaRoots(){
+  const container = document.getElementById('mr-list');
+  if(!container) return;
+  container.innerHTML = '';
+
+  _mrRoots.forEach((rootPath, idx) => {
+    const isDefault = (rootPath === _mrDefault);
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);font-size:12px';
+
+    // Status dot — green if default, accent for extra roots
+    const dot = document.createElement('span');
+    dot.style.cssText = `width:7px;height:7px;border-radius:50%;flex-shrink:0;background:${isDefault ? 'var(--green)' : 'var(--accent)'}`;
+    row.appendChild(dot);
+
+    // Path text
+    const pathEl = document.createElement('code');
+    pathEl.style.cssText = 'flex:1;color:var(--text);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    pathEl.title = rootPath;
+    pathEl.textContent = rootPath;
+    row.appendChild(pathEl);
+
+    // Badge
+    const badge = document.createElement('span');
+    badge.style.cssText = `font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;padding:2px 7px;border-radius:10px;flex-shrink:0;${isDefault ? 'background:rgba(100,200,100,0.12);color:var(--green)' : 'background:rgba(184,115,51,0.12);color:var(--accent)'}`;
+    badge.textContent = isDefault ? 'default' : 'extra';
+    row.appendChild(badge);
+
+    // Remove button — disabled for default root
+    if(!isDefault){
+      const btn = document.createElement('button');
+      btn.className = 'btn r';
+      btn.style.cssText = 'padding:3px 10px;font-size:11px;flex-shrink:0';
+      btn.title = 'Remove this extra media root';
+      btn.textContent = '✕ Remove';
+      btn.onclick = () => removeMediaRoot(rootPath);
+      row.appendChild(btn);
+    } else {
+      const lk = document.createElement('span');
+      lk.style.cssText = 'font-size:11px;color:var(--text3);flex-shrink:0';
+      lk.textContent = '🔒 locked';
+      row.appendChild(lk);
+    }
+
+    container.appendChild(row);
+  });
+
+  if(_mrRoots.length === 0){
+    container.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:8px 0">No roots loaded yet — click ↻ Load.</div>';
+  }
+}
+
+async function addMediaRoot(){
+  const input = document.getElementById('mr-new-path');
+  const path  = (input?.value || '').trim();
+  if(!path){ _mrStatus('Enter an absolute path first.', 'warn'); return; }
+
+  _mrStatus('Adding…', 'busy');
+  try{
+    // Build the full new list: existing extras + new path
+    const extras = _mrRoots.filter(r => r !== _mrDefault);
+    if(extras.includes(path)){
+      _mrStatus('⚠ That path is already in the list.', 'warn');
+      return;
+    }
+    const newRoots = [...extras, path];
+    await _saveRootsToServer(newRoots);
+    if(input) input.value = '';
+  }catch(e){
+    _mrStatus('✕ '+e.message, 'err');
+  }
+}
+
+async function removeMediaRoot(path){
+  if(!confirm(`Remove media root?\n\n${path}\n\nThe directory itself will not be deleted.`)) return;
+  _mrStatus('Removing…', 'busy');
+  try{
+    const extras = _mrRoots.filter(r => r !== _mrDefault && r !== path);
+    await _saveRootsToServer(extras);
+  }catch(e){
+    _mrStatus('✕ '+e.message, 'err');
+  }
+}
+
+async function _saveRootsToServer(extraRoots){
+  // Always include the default root so the server deduplicates cleanly
+  const roots = [_mrDefault, ...extraRoots].filter(Boolean);
+  const r = await fetch('/api/action', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action:'save_media_roots', roots})
+  });
+  const d = await r.json().catch(() => ({}));
+  if(!d.ok) throw new Error(d.msg || 'Server error');
+
+  _mrRoots = d.roots || roots;
+  _renderMediaRoots();
+  const warnings = (d.warnings || []).join(' · ');
+  const msg = d.msg + (warnings ? ' ⚠ '+warnings : '');
+  _mrStatus('✓ '+msg, 'ok');
+  toast(d.msg || 'Media roots saved', 'ok');
+}
+
+function _mrStatus(msg, type){
+  const el = document.getElementById('mr-status');
+  if(!el) return;
+  el.textContent = msg;
+  el.style.color = type==='ok' ? 'var(--green)' : type==='err' ? 'var(--red)' : type==='warn' ? 'var(--yellow)' : 'var(--text3)';
+}
+
+
+// ═══════════════════════════════════
 // BACKUP & RESTORE
 // ═══════════════════════════════════
 async function downloadBackup(){
@@ -4730,6 +4900,7 @@ async function downloadBackup(){
       mail:         document.getElementById('bk-mail')?.checked!==false,
       resume:       document.getElementById('bk-resume')?.checked!==false,
       app_settings: document.getElementById('bk-app-settings')?.checked!==false,
+      media_roots:  document.getElementById('bk-media-roots')?.checked!==false,
     };
     const r=await fetch('/api/backup',{
       method:'POST',headers:{'Content-Type':'application/json'},
@@ -4799,6 +4970,7 @@ async function doRestore(file){
       mail_config:      {key:'mail_config',       label:'Mail config',      present:'mail_config' in data},
       resume_positions: {key:'resume_positions',  label:'Resume positions', present:'resume_positions' in data},
       app_settings:     {key:'app_settings',      label:'App settings',     present:'app_settings' in data},
+      media_roots:      {key:'media_roots',       label:'Media roots',      present:'media_roots' in data},
     };
     const sections=Object.values(sectionMap).filter(s=>s.present).map(s=>s.label);
     if(sections.length===0){throw new Error('Backup file contains no restorable sections');}
@@ -4815,6 +4987,7 @@ async function doRestore(file){
     if('mail_config' in data)      counts['Mail config']='present (password excluded)';
     if('resume_positions' in data) counts['Resume positions']=typeof data.resume_positions==='object'?`${Object.keys(data.resume_positions).length} entry(ies)`:'present';
     if('app_settings' in data)     counts['App settings']='present';
+    if('media_roots' in data)      counts['Media roots']=Array.isArray(data.media_roots)?`${data.media_roots.length} extra root(s)`:'present';
 
     // Version mismatch warning
     let verWarning='';
@@ -4881,6 +5054,7 @@ async function doRestore(file){
       // Always reload streams table and events after any restore
       setTimeout(()=>{
         if(typeof loadStreams==='function') loadStreams();
+        if(r_list.includes('media_roots') && typeof loadMediaRoots==='function') loadMediaRoots();
       },3500);
     }else{
       throw new Error(j.msg||'Restore failed');
