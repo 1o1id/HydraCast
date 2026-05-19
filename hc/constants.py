@@ -32,7 +32,7 @@ from typing import Dict, List, Optional
 
 # ── App metadata ──────────────────────────────────────────────────────────────
 APP_NAME   = "HydraCast"
-APP_VER    = "6.3.0"
+APP_VER    = "6.4.0"
 APP_AUTHOR = "rhshourav"
 APP_GITHUB = "https://github.com/rhshourav/HydraCast"
 
