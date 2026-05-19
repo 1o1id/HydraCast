@@ -95,6 +95,7 @@ def EVENTS_CSV()     -> Path: return _require("EVENTS_CSV")
 # The default <base>/media is *always* treated as the primary root even when
 # absent from the persisted list (get_media_roots() injects it automatically).
 _media_roots: List[Path] = []
+_media_roots_loaded: bool = False   # True once load_media_roots() has run
 
 
 def _media_roots_file() -> Path:
@@ -109,7 +110,8 @@ def load_media_roots() -> None:
     the in-memory list stays empty and get_media_roots() returns the default.
     """
     import json as _json
-    global _media_roots
+    global _media_roots, _media_roots_loaded
+    _media_roots_loaded = True
     p = _media_roots_file()
     if not p.exists():
         _media_roots = []
@@ -147,7 +149,15 @@ def get_media_roots() -> List[Path]:
     Return the ordered list of media root directories.
     The default MEDIA_DIR is always first.  Additional user-defined roots
     follow in the order they were added.
+    Lazily calls load_media_roots() on first access so that os.execv
+    restarts (which skip main.py initialisation) still see the full list.
     """
+    global _media_roots_loaded
+    if not _media_roots_loaded:
+        try:
+            load_media_roots()
+        except Exception:
+            _media_roots_loaded = True  # don't retry on persistent failure
     try:
         default = _require("MEDIA")
     except RuntimeError:
