@@ -2,12 +2,26 @@
 hc/web_filemanager.py  —  File Manager mixin for WebHandler.
 
 Provides:
-  GET  /api/files?path=<rel>       list a directory inside MEDIA_DIR
+  GET  /api/files?path=<encoded>   list a directory inside any media root
   POST file_rename                 rename a file or folder
   POST file_delete                 delete a file (or empty folder)
   POST file_delete_dir             delete a folder recursively
   POST file_move                   move a file/folder to a new location
   POST file_copy                   copy a file to a new location
+
+Multi-root path encoding
+────────────────────────
+Paths are encoded as  @N/relative/path  where N is the zero-based index
+returned by get_media_roots().
+
+  path=""          → top-level listing of all roots  (multi_root: true)
+  path="@0"        → browse the default media root (MEDIA_DIR)
+  path="@0/sub"    → browse a sub-folder inside root 0
+  path="@1"        → browse the first extra root
+  path="@1/a/b"    → browse  <root1>/a/b
+
+Bare paths without a leading "@" are treated as root-0 paths for
+backwards compatibility with any code that has not been updated yet.
 
 After any mutation the mixin:
   • Invalidates the library cache.
@@ -19,9 +33,9 @@ from __future__ import annotations
 import logging
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
-from hc.constants import MEDIA_DIR, SUPPORTED_EXTS
+from hc.constants import SUPPORTED_EXTS, get_media_roots
 from hc.utils import _safe_path
 
 if TYPE_CHECKING:
@@ -31,7 +45,70 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Playlist sync helpers (module-level so they can be unit-tested independently)
+# Multi-root path helpers
+# ---------------------------------------------------------------------------
+
+def _decode_root(raw_path: str) -> Optional[Tuple[int, Path, str]]:
+    """
+    Decode a multi-root encoded path.
+
+    Formats accepted:
+      "@N"         → (N, roots[N], "")
+      "@N/rel"     → (N, roots[N], "rel")
+      "bare/path"  → (0, roots[0], "bare/path")   # legacy compatibility
+
+    Returns (root_idx, root_dir, rel_within_root) or None if invalid.
+    """
+    roots = get_media_roots()
+    if not roots:
+        return None
+
+    if raw_path.startswith("@"):
+        slash = raw_path.find("/", 1)
+        if slash == -1:
+            idx_str, rel = raw_path[1:], ""
+        else:
+            idx_str, rel = raw_path[1:slash], raw_path[slash + 1:]
+        try:
+            idx = int(idx_str)
+        except ValueError:
+            return None
+        if idx < 0 or idx >= len(roots):
+            return None
+        return (idx, roots[idx], rel)
+    else:
+        # Legacy bare path → root 0
+        return (0, roots[0], raw_path)
+
+
+def _encode_path(root_idx: int, rel_within: str) -> str:
+    """Return the canonical encoded path string for a root + relative combo."""
+    if rel_within:
+        return f"@{root_idx}/{rel_within}"
+    return f"@{root_idx}"
+
+
+def _resolve_fm_path(raw_path: str) -> Optional[Tuple[Path, Path]]:
+    """
+    Decode *raw_path* and validate it as a safe path inside its root.
+
+    Returns (root_dir, absolute_safe_path) or None if invalid / access denied.
+    """
+    decoded = _decode_root(raw_path)
+    if decoded is None:
+        return None
+    _, root_dir, rel_within = decoded
+    if rel_within:
+        target = root_dir / rel_within
+        safe = _safe_path(target, root_dir)
+        if safe is None:
+            return None
+        return (root_dir, safe)
+    return (root_dir, root_dir)
+
+
+# ---------------------------------------------------------------------------
+# Playlist sync helpers
 # ---------------------------------------------------------------------------
 
 def _update_stream_playlists(
@@ -42,17 +119,6 @@ def _update_stream_playlists(
     """
     Walk every stream config and update (or remove) PlaylistItem entries
     whose file_path resolves to *old_path*.
-
-    Parameters
-    ----------
-    old_path : Path   absolute path that was renamed / moved / deleted
-    new_path : Path | None
-        New absolute path after rename/move.  Pass None to delete the entry.
-    mgr      : StreamManager | None
-
-    Returns
-    -------
-    int  number of playlist items changed
     """
     if mgr is None:
         return 0
@@ -77,7 +143,6 @@ def _update_stream_playlists(
                 if new_path is not None:
                     item.file_path = new_path
                     new_playlist.append(item)
-                # else: deletion — drop the item
             else:
                 new_playlist.append(item)
 
@@ -89,7 +154,7 @@ def _update_stream_playlists(
             from hc.json_manager import JSONManager
             JSONManager.save([st.config for st in mgr.states])
             log.info(
-                "filemanager: updated %d playlist reference(s): %s → %s",
+                "filemanager: updated %d playlist reference(s): %s -> %s",
                 count, old_path.name, new_path.name if new_path else "DELETED",
             )
         except Exception as exc:
@@ -103,10 +168,7 @@ def _update_folder_in_playlists(
     new_dir: Optional[Path],
     mgr: Any,
 ) -> int:
-    """
-    Like _update_stream_playlists but for every file inside a *directory*.
-    Used when a folder is renamed / moved.
-    """
+    """Like _update_stream_playlists but for every file inside a directory."""
     if mgr is None:
         return 0
 
@@ -131,7 +193,6 @@ def _update_folder_in_playlists(
                 if new_dir is not None:
                     item.file_path = new_dir / rel
                     new_playlist.append(item)
-                # else deletion — drop
             except ValueError:
                 new_playlist.append(item)
 
@@ -143,7 +204,7 @@ def _update_folder_in_playlists(
             from hc.json_manager import JSONManager
             JSONManager.save([st.config for st in mgr.states])
             log.info(
-                "filemanager: updated %d playlist entries for dir: %s → %s",
+                "filemanager: updated %d playlist entries for dir: %s -> %s",
                 count, old_dir.name, new_dir.name if new_dir else "DELETED",
             )
         except Exception as exc:
@@ -159,57 +220,98 @@ def _update_folder_in_playlists(
 class _FileManagerMixin:
     """
     Mixed into WebHandler.  Provides _get_files() and _handle_file_op().
-    Expects self._json() and self._WEB_MANAGER to exist on the host class.
     """
 
     # ── GET /api/files ────────────────────────────────────────────────────────
 
     def _get_files(self, qs: Dict[str, Any]) -> None:
         """
-        List contents of MEDIA_DIR/<rel_path>.
-        Returns {path, dirs: [...], files: [...], breadcrumb: [...]}
+        List contents of a directory inside any configured media root.
+
+        path=""       -> virtual top-level: list all roots as folder entries
+        path="@N"     -> browse root N
+        path="@N/rel" -> browse sub-folder inside root N
         """
         from hc.utils import _fmt_size
 
-        # Guard: MEDIA_DIR() raises RuntimeError if set_base_dir() was never called.
-        try:
-            media = MEDIA_DIR()
-        except RuntimeError as exc:
-            log.error("_get_files: %s", exc)
-            self._json({"error": str(exc)}, 500)
+        roots = get_media_roots()
+        if not roots:
+            self._json({"error": "No media roots configured"}, 500)
             return
-
-        if not media.exists():
-            log.error("_get_files: media directory does not exist: %s", media)
-            self._json({"error": f"Media directory does not exist: {media}"}, 500)
-            return
-
-        log.debug("_get_files: serving from '%s'", media)
 
         rel_raw = qs.get("path", [""])[0].strip().lstrip("/\\")
 
-        if rel_raw:
-            target = media / rel_raw
-            safe   = _safe_path(target, media)
+        # ── Top-level: list all roots ─────────────────────────────────────────
+        if not rel_raw:
+            if len(roots) == 1:
+                # Single root — enter it directly; no visible UX change.
+                rel_raw = "@0"
+            else:
+                dirs: List[Dict] = []
+                for i, root in enumerate(roots):
+                    label = "Media" if i == 0 else root.name
+                    try:
+                        item_count = sum(1 for _ in root.iterdir()) if root.is_dir() else 0
+                    except OSError:
+                        item_count = 0
+                    dirs.append({
+                        "name":    label,
+                        "path":    f"@{i}",
+                        "items":   item_count,
+                        "is_root": True,
+                    })
+                self._json({
+                    "path":        "",
+                    "dirs":        dirs,
+                    "files":       [],
+                    "breadcrumb":  [{"name": "Media", "path": ""}],
+                    "multi_root":  True,
+                    "roots_total": len(roots),
+                })
+                return
+
+        # ── Decode root from path ─────────────────────────────────────────────
+        decoded = _decode_root(rel_raw)
+        if decoded is None:
+            self._json({"error": "Invalid path"}, 400)
+            return
+
+        root_idx, root_dir, rel_within = decoded
+
+        if not root_dir.exists():
+            self._json({"error": f"Root directory does not exist: {root_dir}"}, 500)
+            return
+
+        if rel_within:
+            target = root_dir / rel_within
+            safe   = _safe_path(target, root_dir)
             if safe is None or not safe.is_dir():
                 self._json({"error": "Directory not found or access denied"}, 404)
                 return
         else:
-            safe = media
+            safe = root_dir
+
+        root_label = "Media" if root_idx == 0 else root_dir.name
 
         try:
-            dirs: List[Dict] = []
-            files: List[Dict] = []
+            dirs_out: List[Dict] = []
+            files_out: List[Dict] = []
+
             for entry in sorted(safe.iterdir(), key=lambda p: (p.is_file(), p.name.lower())):
-                rel = str(entry.relative_to(media))
+                try:
+                    entry_rel = str(entry.relative_to(root_dir))
+                except ValueError:
+                    continue
+                encoded = _encode_path(root_idx, entry_rel)
+
                 if entry.is_dir():
                     try:
                         item_count = sum(1 for _ in entry.iterdir())
                     except OSError:
                         item_count = 0
-                    dirs.append({
+                    dirs_out.append({
                         "name":  entry.name,
-                        "path":  rel,
+                        "path":  encoded,
                         "items": item_count,
                     })
                 elif entry.is_file():
@@ -218,30 +320,37 @@ class _FileManagerMixin:
                         size_b = entry.stat().st_size
                     except OSError:
                         size_b = 0
-                    files.append({
+                    files_out.append({
                         "name":      entry.name,
-                        "path":      rel,
+                        "path":      encoded,
                         "size":      _fmt_size(size_b),
                         "size_b":    size_b,
                         "supported": ext in SUPPORTED_EXTS,
                         "ext":       ext,
                     })
 
-            # Build breadcrumb
+            # Breadcrumb: Media > RootLabel [> sub > …]
             crumbs = [{"name": "Media", "path": ""}]
-            parts = Path(rel_raw).parts if rel_raw else []
-            for i, part in enumerate(parts):
-                crumbs.append({
-                    "name": part,
-                    "path": str(Path(*parts[: i + 1])),
-                })
+            crumbs.append({"name": root_label, "path": f"@{root_idx}"})
+            if rel_within:
+                parts = Path(rel_within).parts
+                for i, part in enumerate(parts):
+                    crumb_rel = str(Path(*parts[: i + 1]))
+                    crumbs.append({
+                        "name": part,
+                        "path": _encode_path(root_idx, crumb_rel),
+                    })
 
             self._json({
-                "path":       str(safe.relative_to(media)) if safe != media else "",
-                "dirs":       dirs,
-                "files":      files,
-                "breadcrumb": crumbs,
+                "path":        _encode_path(root_idx, rel_within),
+                "dirs":        dirs_out,
+                "files":       files_out,
+                "breadcrumb":  crumbs,
+                "root_idx":    root_idx,
+                "root_label":  root_label,
+                "roots_total": len(roots),
             })
+
         except Exception as exc:
             log.error("_get_files error: %s", exc)
             self._json({"error": str(exc)}, 500)
@@ -280,10 +389,13 @@ class _FileManagerMixin:
             self._json({"ok": False, "msg": "Invalid name — contains forbidden characters"})
             return
 
-        media = MEDIA_DIR()
-        src   = _safe_path(media / raw_path, media)
-        if src is None or not src.exists():
+        resolved = _resolve_fm_path(raw_path)
+        if resolved is None:
             self._json({"ok": False, "msg": "File/folder not found or access denied"})
+            return
+        root_dir, src = resolved
+        if not src.exists():
+            self._json({"ok": False, "msg": "File/folder not found"})
             return
 
         dst = src.parent / new_name
@@ -291,9 +403,7 @@ class _FileManagerMixin:
             self._json({"ok": False, "msg": f"'{new_name}' already exists in this folder"})
             return
 
-        # FIX: capture is_dir BEFORE rename so the check survives the fs operation.
         is_dir = src.is_dir()
-
         try:
             src.rename(dst)
         except Exception as exc:
@@ -302,16 +412,20 @@ class _FileManagerMixin:
 
         _invalidate_lib_cache()
         mgr = _WEB_MANAGER
+        n = _update_folder_in_playlists(src, dst, mgr) if is_dir \
+            else _update_stream_playlists(src, dst, mgr)
 
-        if is_dir:
-            n = _update_folder_in_playlists(src, dst, mgr)
-        else:
-            n = _update_stream_playlists(src, dst, mgr)
+        decoded = _decode_root(raw_path)
+        try:
+            new_rel = str(dst.relative_to(root_dir))
+        except ValueError:
+            new_rel = dst.name
+        new_path_encoded = _encode_path(decoded[0], new_rel) if decoded else new_rel
 
         self._json({
-            "ok":  True,
-            "msg": f"Renamed to '{new_name}'" + (f" · {n} playlist item(s) updated" if n else ""),
-            "new_path": str(dst.relative_to(media)),
+            "ok":       True,
+            "msg":      f"Renamed to '{new_name}'" + (f" · {n} playlist item(s) updated" if n else ""),
+            "new_path": new_path_encoded,
         })
 
     # ── delete file ──────────────────────────────────────────────────────────
@@ -325,11 +439,11 @@ class _FileManagerMixin:
             self._json({"ok": False, "msg": "path is required"})
             return
 
-        media = MEDIA_DIR()
-        target = _safe_path(media / raw_path, media)
-        if target is None or not target.is_file():
+        resolved = _resolve_fm_path(raw_path)
+        if resolved is None or not resolved[1].is_file():
             self._json({"ok": False, "msg": "File not found or access denied"})
             return
+        _, target = resolved
 
         try:
             target.unlink()
@@ -355,10 +469,14 @@ class _FileManagerMixin:
             self._json({"ok": False, "msg": "path is required"})
             return
 
-        media = MEDIA_DIR()
-        target = _safe_path(media / raw_path, media)
-        if target is None or not target.is_dir():
+        resolved = _resolve_fm_path(raw_path)
+        if resolved is None or not resolved[1].is_dir():
             self._json({"ok": False, "msg": "Directory not found or access denied"})
+            return
+        root_dir, target = resolved
+
+        if target.resolve() == root_dir.resolve():
+            self._json({"ok": False, "msg": "Cannot delete a media root directory itself"})
             return
 
         try:
@@ -377,29 +495,34 @@ class _FileManagerMixin:
     # ── move ─────────────────────────────────────────────────────────────────
 
     def _fm_move(self, data: Dict[str, Any]) -> None:
-        """Move a file or folder to a different directory inside MEDIA_DIR."""
+        """
+        Move a file or folder to a different directory.
+        Both path and dest_dir accept @N/rel encoding, enabling cross-root moves.
+        """
         from hc.web import _WEB_MANAGER, _invalidate_lib_cache  # type: ignore
 
         raw_src  = str(data.get("path", "")).strip()
-        raw_dest = str(data.get("dest_dir", "")).strip()  # relative dir path
+        raw_dest = str(data.get("dest_dir", "")).strip()
 
         if not raw_src:
             self._json({"ok": False, "msg": "path is required"})
             return
 
-        media = MEDIA_DIR()
-        src   = _safe_path(media / raw_src, media)
-        if src is None or not src.exists():
+        src_resolved = _resolve_fm_path(raw_src)
+        if src_resolved is None or not src_resolved[1].exists():
             self._json({"ok": False, "msg": "Source not found or access denied"})
             return
+        src_root, src = src_resolved
 
         if raw_dest:
-            dest_dir = _safe_path(media / raw_dest, media)
-            if dest_dir is None or not dest_dir.is_dir():
+            dest_resolved = _resolve_fm_path(raw_dest)
+            if dest_resolved is None or not dest_resolved[1].is_dir():
                 self._json({"ok": False, "msg": "Destination directory not found"})
                 return
+            dest_root, dest_dir = dest_resolved
         else:
-            dest_dir = media  # move to root
+            dest_root = src_root
+            dest_dir  = src_root
 
         dst = dest_dir / src.name
         if dst.resolve() == src.resolve():
@@ -409,7 +532,6 @@ class _FileManagerMixin:
             self._json({"ok": False, "msg": f"'{src.name}' already exists in destination"})
             return
 
-        # FIX: capture is_dir BEFORE the move operation.
         is_dir = src.is_dir()
         try:
             shutil.move(str(src), str(dst))
@@ -422,17 +544,19 @@ class _FileManagerMixin:
         n = _update_folder_in_playlists(src, dst, mgr) if is_dir \
             else _update_stream_playlists(src, dst, mgr)
 
+        dest_label = dest_dir.name or dest_root.name
         self._json({
-            "ok":      True,
-            "msg":     f"Moved '{src.name}' → '{dest_dir.name or 'Media'}'" +
-                       (f" · {n} playlist item(s) updated" if n else ""),
-            "new_path": str(dst.relative_to(media)),
+            "ok":  True,
+            "msg": f"Moved '{src.name}' -> '{dest_label}'" +
+                   (f" · {n} playlist item(s) updated" if n else ""),
         })
 
     # ── copy ─────────────────────────────────────────────────────────────────
 
     def _fm_copy(self, data: Dict[str, Any]) -> None:
-        """Copy a file (not a directory) to a destination inside MEDIA_DIR."""
+        """
+        Copy a file to a destination (cross-root supported via @N/rel encoding).
+        """
         from hc.web import _invalidate_lib_cache  # type: ignore
 
         raw_src  = str(data.get("path", "")).strip()
@@ -443,19 +567,20 @@ class _FileManagerMixin:
             self._json({"ok": False, "msg": "path is required"})
             return
 
-        media = MEDIA_DIR()
-        src   = _safe_path(media / raw_src, media)
-        if src is None or not src.is_file():
+        src_resolved = _resolve_fm_path(raw_src)
+        if src_resolved is None or not src_resolved[1].is_file():
             self._json({"ok": False, "msg": "Source file not found or access denied"})
             return
+        src_root, src = src_resolved
 
         if raw_dest:
-            dest_dir = _safe_path(media / raw_dest, media)
-            if dest_dir is None or not dest_dir.is_dir():
+            dest_resolved = _resolve_fm_path(raw_dest)
+            if dest_resolved is None or not dest_resolved[1].is_dir():
                 self._json({"ok": False, "msg": "Destination directory not found"})
                 return
+            _, dest_dir = dest_resolved
         else:
-            dest_dir = media
+            dest_dir = src_root
 
         fname = new_name if new_name else src.name
         dst   = dest_dir / fname
@@ -475,7 +600,6 @@ class _FileManagerMixin:
 
         _invalidate_lib_cache()
         self._json({
-            "ok":      True,
-            "msg":     f"Copied '{src.name}' → '{dest_dir.name or 'Media'}/{fname}'",
-            "new_path": str(dst.relative_to(media)),
+            "ok":  True,
+            "msg": f"Copied '{src.name}' -> '{dest_dir.name or 'Media'}/{fname}'",
         })
