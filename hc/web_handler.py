@@ -1193,6 +1193,23 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                     pass
             self._json({"ok": True, "msg": "Restarting all streams"})
 
+        elif action == "restart_process":
+            # Stop all streams, flush the response, then os.execv to
+            # replace this process with a fresh copy of itself.
+            import os as _os, sys as _sys, threading as _thr
+            if mgr is not None:
+                for st in mgr.states:
+                    try:
+                        mgr.stop(st.config.name)
+                    except Exception:
+                        pass
+            self._json({"ok": True, "msg": "Restarting process…"})
+            def _do_exec():
+                import time as _time
+                _time.sleep(0.4)  # let the HTTP response flush
+                _os.execv(_sys.executable, [_sys.executable] + _sys.argv)
+            _thr.Thread(target=_do_exec, daemon=True).start()
+
         elif action == "skip_next":
             st = mgr.get_state(str(data.get("name", "")))
             if st:
