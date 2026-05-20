@@ -9,8 +9,8 @@ Provides two layers:
 
 Storage layout  (<config>/holidays/)
 ──────────────────────────────────────
-  library_YYYY_CC[_SS].json    — cached library holidays
-  custom.json                  — user-defined holidays (all years / countries)
+  library_YYYY_CC[_SS].hcf    — cached library holidays
+  custom.hcf                  — user-defined holidays (all years / countries)
 
 JSON schema for a holiday entry
 ────────────────────────────────
@@ -46,11 +46,11 @@ def _holiday_dir() -> Path:
 
 def _library_path(year: int, country: str, subdiv: Optional[str] = None) -> Path:
     suffix = f"_{subdiv}" if subdiv else ""
-    return _holiday_dir() / f"library_{year}_{country}{suffix}.json"
+    return _holiday_dir() / f"library_{year}_{country}{suffix}.hcf"
 
 
 def _custom_path() -> Path:
-    return _holiday_dir() / "custom.json"
+    return _holiday_dir() / "custom.hcf"
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +70,7 @@ def _read_json(p: Path) -> List[Dict[str, Any]]:
 
 
 def _write_json(p: Path, data: List[Dict[str, Any]]) -> None:
-    tmp = p.with_suffix(".json.tmp")
+    tmp = p.with_suffix(".hcf.tmp")
     try:
         tmp.write_text(
             json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
