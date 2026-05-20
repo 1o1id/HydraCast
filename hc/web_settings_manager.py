@@ -48,7 +48,7 @@ def save_settings(updates: Dict[str, Any]) -> Dict[str, Any]:
     current = load_settings()
     current.update(updates)
     p = _settings_path()
-    tmp = p.with_suffix(".hcf.tmp")
+    tmp = p.with_name(p.name + ".tmp")
     try:
         tmp.write_text(json.dumps(current, indent=2, ensure_ascii=False), encoding="utf-8")
         tmp.replace(p)
