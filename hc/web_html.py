@@ -2401,7 +2401,7 @@ function _rowCells(s,i,showRtsp){
         ${s.status==='LIVE'?`<button class="btn b" onclick="openSeek('${esc(s.name)}',${s.duration||0},${s.current_secs||0})" title="Jump to a specific position in the current file">⏩</button>`:''}
         ${isEvent?`<button class="btn" style="background:var(--purple-dim);color:var(--purple);border:1px solid rgba(154,138,176,0.5);font-size:11px" onclick="cancelEvent('${esc(s.name)}')" title="Stop the running event and resume compliance/playlist immediately">✕ Cancel Event</button>`:''}
       </div>
-      ${s.error_msg?`<div style="font-size:10px;color:var(--red);margin-top:4px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:help" title="Last error (stream has since restarted — check Logs tab for full details):\n${esc(s.error_msg)}">⚠ ${esc(s.error_msg)}</div>`:''}
+      ${s.error_msg?`<div style="font-size:10px;color:var(--red);margin-top:4px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(s.error_msg)}">⚠ ${esc(s.error_msg)}</div>`:''}
     </td>`;
 }
 
@@ -2501,7 +2501,8 @@ function openSeek(name,dur,cur){
     `Stream: <b style="color:var(--text)">${esc(name)}</b> &nbsp;·&nbsp; Duration: <b>${fmtSecs(dur)}</b> &nbsp;·&nbsp; Current: <b>${fmtSecs(cur)}</b>`;
   document.getElementById('seek-val').value=fmtSecs(cur);
   const slider=document.getElementById('seek-slider');
-  slider.max=dur||100;slider.value=cur||0;
+  const _seekMax=Math.max(0,(dur||100)-1);
+  slider.max=_seekMax;slider.value=Math.min(cur||0,_seekMax);
   slider.oninput=()=>{document.getElementById('seek-val').value=fmtSecs(+slider.value);};
   document.getElementById('seek-modal').classList.add('open');
   document.getElementById('seek-val').focus();
@@ -2515,6 +2516,12 @@ function doSeek(){
   else if(p.length===2)s=p[0]*60+p[1];
   else s=+p[0];
   if(isNaN(s)||s<0){toast('Invalid time','err');return;}
+  const _durEl=document.getElementById('seek-slider');
+  const _maxSecs=Math.max(0,(+_durEl.max||0));
+  if(_maxSecs>0 && s>_maxSecs){
+    toast('Seek position exceeds file duration — capped to '+fmtSecs(_maxSecs),'warn');
+    s=_maxSecs;
+  }
   api('seek',{name:_seekName,seconds:s});
   closeSeek();
 }
