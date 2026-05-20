@@ -1155,7 +1155,7 @@ select option{background:var(--bg3)}
       </span>
     </div>
     __APP_NAME__
-    <sub id="ver-badge">v—</sub>
+    <sub id="ver-badge">v__APP_VER__</sub>
   </div>
 
   <nav class="nav-tabs">
@@ -1908,12 +1908,12 @@ select option{background:var(--bg3)}
           <div style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.7">
             Downloads a single <code style="color:var(--accent-light)">.hc</code> file containing all your configuration:
             <ul style="margin:6px 0 0 16px;color:var(--text3);font-size:11px;line-height:1.9">
-              <li>Stream definitions (streams.json)</li>
-              <li>Scheduled events (events.json)</li>
-              <li>Mail alert config (mail_config.json)</li>
-              <li>Resume positions (resume_positions.json)</li>
+              <li>Stream definitions (streams.hcf)</li>
+              <li>Scheduled events (events.hcf)</li>
+              <li>Mail alert config (mail_config.hcf)</li>
+              <li>Resume positions (resume_positions.hcf)</li>
               <li>App settings (holiday country, etc.)</li>
-              <li>Media root directory list (media_roots.json)</li>
+              <li>Media root directory list (media_roots.hcf)</li>
             </ul>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">
@@ -3939,7 +3939,7 @@ async function submitNewStream(){
 }
 
 async function deleteStream(name){
-  if(!confirm(`Delete stream "${name}"?\n\nThis will remove it from streams.json immediately. The stream will be stopped if it is currently running.`))return;
+  if(!confirm(`Delete stream "${name}"?\n\nThis will remove it from streams.hcf immediately. The stream will be stopped if it is currently running.`))return;
   const r=await api('delete_stream',{name});
   if(r?.ok){
     if(_configSelected===name) cancelConfig();
@@ -4637,7 +4637,7 @@ async function loadMailConfig(){
     // Gmail OAuth2 status
     _setGmailUI(!!d.oauth2_token_exists);
 
-    document.getElementById('ml-status').textContent='✓ Config loaded from mail_config.json';
+    document.getElementById('ml-status').textContent='✓ Config loaded from mail_config.hcf';
     document.getElementById('ml-status').style.color='var(--green)';
   }catch(e){
     document.getElementById('ml-status').textContent='Failed to load config';
@@ -4675,7 +4675,7 @@ async function saveMailConfig(){
     const j=await r.json();
     toast(j.msg||(j.ok?'Saved':'Error'),j.ok?'ok':'err');
     const st=document.getElementById('ml-status');
-    st.textContent=j.ok?'✓ mail_config.json saved':'✕ '+j.msg;
+    st.textContent=j.ok?'✓ mail_config.hcf saved':'✕ '+j.msg;
     st.style.color=j.ok?'var(--green)':'var(--red)';
   }catch(e){toast('Save failed','err');}
 }
