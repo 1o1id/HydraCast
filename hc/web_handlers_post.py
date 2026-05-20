@@ -665,7 +665,7 @@ class _PostHandlersMixin:
                 except Exception:
                     payload["mail_config"] = {}
             if include.get("resume", True):
-                p = BASE_DIR() / "resume_positions.json"
+                p = CONFIG_DIR() / "resume_positions.hcf"
                 try:
                     payload["resume_positions"] = _json.loads(
                         p.read_text(encoding="utf-8")) if p.exists() else {}
@@ -731,7 +731,7 @@ class _PostHandlersMixin:
                 p.write_text(_json.dumps(mc, indent=4, ensure_ascii=False), encoding="utf-8")
                 restored.append("mail_config")
             if "resume_positions" in payload:
-                p = BASE_DIR() / "resume_positions.json"
+                p = CONFIG_DIR() / "resume_positions.hcf"
                 p.write_text(
                     _json.dumps(payload["resume_positions"], indent=2, ensure_ascii=False),
                     encoding="utf-8",
