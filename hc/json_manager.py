@@ -41,11 +41,11 @@ def _config_dir() -> Path:
 
 
 def _streams_path() -> Path:
-    return _config_dir() / "streams.json"
+    return _config_dir() / "streams.hcf"
 
 
 def _events_path() -> Path:
-    return _config_dir() / "events.json"
+    return _config_dir() / "events.hcf"
 
 
 # ---------------------------------------------------------------------------
@@ -197,13 +197,13 @@ class JSONManager:
     def load(cls) -> List[StreamConfig]:
         p = _streams_path()
         if not p.exists():
-            log.info("json_manager: no streams.json yet — starting with empty config.")
+            log.info("json_manager: no streams.hcf yet — starting with empty config.")
             return []
 
         try:
             raw: List[Dict[str, Any]] = json.loads(p.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            raise ValueError(f"streams.json is not valid JSON: {exc}") from exc
+            raise ValueError(f"streams.hcf is not valid JSON: {exc}") from exc
 
         configs: List[StreamConfig] = []
         for entry in raw:
@@ -219,7 +219,7 @@ class JSONManager:
         p = _streams_path()
         data = [_config_to_dict(c) for c in configs]
         text = json.dumps(data, indent=2, ensure_ascii=False)
-        tmp = p.with_suffix(".json.tmp")
+        tmp = p.with_suffix(".hcf.tmp")
         try:
             tmp.write_text(text, encoding="utf-8")
             tmp.replace(p)
@@ -236,7 +236,7 @@ class JSONManager:
         try:
             raw: List[Dict[str, Any]] = json.loads(p.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            log.error("json_manager: events.json is not valid JSON: %s", exc)
+            log.error("json_manager: events.hcf is not valid JSON: %s", exc)
             return []
 
         events: List[OneShotEvent] = []
