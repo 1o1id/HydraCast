@@ -2988,7 +2988,9 @@ async function hdAddCustomSave(){
     document.getElementById('hd-add-name').value='';
     toast('Custom holiday added','ok');
     _hdLoaded=false; _hdData=[];
+    if(typeof window.calendarRefreshHolidays==='function') window.calendarRefreshHolidays();
     loadHolidays();
+    loadCustomHolidays();
   }catch(e){errEl.textContent='✕ '+e.message;errEl.style.display='block';}
 }
 
@@ -3001,7 +3003,9 @@ async function hdDeleteCustom(date,name,btn){
     if(j.error) throw new Error(j.error);
     toast('Holiday removed','ok');
     _hdLoaded=false; _hdData=[];
+    if(typeof window.calendarRefreshHolidays==='function') window.calendarRefreshHolidays();
     loadHolidays();
+    loadCustomHolidays();
   }catch(e){toast('Delete failed: '+e.message,'err');}
 }
 
@@ -3073,7 +3077,9 @@ async function addCustomHoliday(){
     document.getElementById('chol-name').value='';
     toast('Custom holiday added','ok');
     _hdLoaded=false; _hdData=[];
+    if(typeof window.calendarRefreshHolidays==='function') window.calendarRefreshHolidays();
     loadCustomHolidays();
+    loadHolidays();
   }catch(e){st.textContent='✕ '+e.message;st.style.color='var(--red)';}
 }
 
@@ -3087,7 +3093,9 @@ async function deleteCustomHoliday(idx){
     if(j.error) throw new Error(j.error);
     toast('Holiday removed','ok');
     _hdLoaded=false; _hdData=[];
+    if(typeof window.calendarRefreshHolidays==='function') window.calendarRefreshHolidays();
     loadCustomHolidays();
+    loadHolidays();
   }catch(e){toast('Delete failed: '+e.message,'err');}
 }
 
@@ -6679,6 +6687,13 @@ function EventsCalendar() {
   const [hidePlayed, setHidePlayed] = useState(false);
   const libLoaded = useRef(false);
   const toastRef  = useRef(null);
+
+  // Expose a global hook so vanilla-JS add/delete handlers can force a
+  // holiday re-fetch by clearing holKey (bypasses the key === holKey guard).
+  useEffect(() => {
+    window.calendarRefreshHolidays = () => setHolKey("");
+    return () => { try { delete window.calendarRefreshHolidays; } catch(_){} };
+  }, []);
 
   const showToast = (msg, type="success") => {
     if (toastRef.current) clearTimeout(toastRef.current);
