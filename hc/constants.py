@@ -6,7 +6,7 @@ v6.3 changes
 • Multi-root media support: get_media_roots() / set_media_roots() / add_media_root()
   / remove_media_root() manage an ordered list of media root directories.
   The default <base>/media is always the primary root.  Roots are persisted to
-  config/media_roots.json and loaded automatically on startup.
+  config/media_roots.hcf and loaded automatically on startup.
 • load_media_roots() / save_media_roots() — called once from main.py after
   set_base_dir(); the Web UI and TUI write through save_media_roots() so the
   list survives restarts.
@@ -56,8 +56,8 @@ def set_base_dir(script_path: Path) -> None:
     _dirs["LOGS"]    = base / "logs"
     _dirs["MEDIA"]   = base / "media"
     _dirs["SSL"]     = base / "ssl"
-    _dirs["STREAMS_JSON"] = base / "config" / "streams.json"
-    _dirs["EVENTS_JSON"]  = base / "config" / "events.json"
+    _dirs["STREAMS_JSON"] = base / "config" / "streams.hcf"
+    _dirs["EVENTS_JSON"]  = base / "config" / "events.hcf"
     # Legacy paths — migration helpers only
     _dirs["CSV"]        = base / "streams.csv"
     _dirs["EVENTS_CSV"] = base / "events.csv"
@@ -91,7 +91,7 @@ def EVENTS_CSV()     -> Path: return _require("EVENTS_CSV")
 
 
 # ── Multi-root media support ──────────────────────────────────────────────────
-# The list is stored in config/media_roots.json.
+# The list is stored in config/media_roots.hcf.
 # The default <base>/media is *always* treated as the primary root even when
 # absent from the persisted list (get_media_roots() injects it automatically).
 _media_roots: List[Path] = []
@@ -99,13 +99,13 @@ _media_roots_loaded: bool = False   # True once load_media_roots() has run
 
 
 def _media_roots_file() -> Path:
-    """Return path to config/media_roots.json (requires set_base_dir first)."""
-    return _require("CONFIG") / "media_roots.json"
+    """Return path to config/media_roots.hcf (requires set_base_dir first)."""
+    return _require("CONFIG") / "media_roots.hcf"
 
 
 def load_media_roots() -> None:
     """
-    Load extra media roots from config/media_roots.json.
+    Load extra media roots from config/media_roots.hcf.
     Call once from main.py after set_base_dir().  Missing file is fine —
     the in-memory list stays empty and get_media_roots() returns the default.
     """
@@ -125,7 +125,7 @@ def load_media_roots() -> None:
 
 def save_media_roots() -> None:
     """
-    Persist the current _media_roots list to config/media_roots.json.
+    Persist the current _media_roots list to config/media_roots.hcf.
     Excludes the default MEDIA_DIR so it is re-injected dynamically on load.
     """
     import json as _json
@@ -135,7 +135,7 @@ def save_media_roots() -> None:
         return
     to_save = [str(r) for r in _media_roots if r.resolve() != default.resolve()]
     p = _media_roots_file()
-    tmp = p.with_suffix(".json.tmp")
+    tmp = p.with_suffix(".hcf.tmp")
     try:
         tmp.write_text(_json.dumps(to_save, indent=2), encoding="utf-8")
         tmp.replace(p)
