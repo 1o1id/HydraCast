@@ -101,20 +101,13 @@ class _CalendarHandlersMixin:
         Library holidays are fetched from the `holidays` package on the first
         request and cached to disk.  Subsequent requests serve the cache.
         Pass ?refresh=1 to force a re-fetch from the library.
-        """
-        try:
-            import holidays as _holidays  # type: ignore[import]
-        except ImportError:
-            self._json(
-                {"error": "The 'holidays' Python package is not installed. "
-                          "Run: pip install holidays"},
-                500,
-            )
-            return
 
+        If the `holidays` package is not installed, or the library fetch fails,
+        custom holidays are still returned so user-defined entries always show.
+        """
         from hc.web_settings_manager import load_settings
         from hc.web_holiday_store import (
-            load_library_cache, save_library_cache, get_all_holidays,
+            load_library_cache, save_library_cache, get_all_holidays, load_custom,
         )
 
         settings = load_settings()
@@ -129,41 +122,70 @@ class _CalendarHandlersMixin:
             self._json({"error": f"Bad query parameters: {exc}"}, 400)
             return
 
-        # ── Try cache first (unless caller asked for a refresh) ───────────
+        # ── Try library cache first (unless caller asked for a refresh) ───
         if not force_refresh:
             cached = load_library_cache(year, country, subdiv)
             if cached is not None:
-                # Merge with custom and return
+                # Cache hit — merge with custom entries and return
                 result = get_all_holidays(year, country, subdiv)
                 self._json(result)
                 return
 
-        # ── Fetch from the holidays library ───────────────────────────────
-        try:
-            kwargs: Dict[str, Any] = {"years": year}
-            if subdiv:
-                kwargs["subdiv"] = subdiv
-            h = _holidays.country_holidays(country, **kwargs)
-            lib_entries = [
-                {"date": str(date), "name": name, "country": country, "source": "library"}
-                for date, name in sorted(h.items())
-            ]
-        except Exception as exc:
-            log.error("_get_holidays: library fetch failed: %s", exc)
-            self._json({"error": str(exc)}, 500)
-            return
+        # ── Try to fetch from the holidays library ────────────────────────
+        lib_entries: List[Dict[str, Any]] = []
+        lib_available = False
+        lib_warning: Optional[str] = None
 
-        # ── Persist to disk cache ─────────────────────────────────────────
         try:
-            save_library_cache(year, country, lib_entries, subdiv)
-        except Exception as exc:
-            log.warning("_get_holidays: could not write cache: %s", exc)
+            import holidays as _holidays  # type: ignore[import]
+            lib_available = True
+        except ImportError:
+            lib_warning = ("The 'holidays' Python package is not installed "
+                           "(run: pip install holidays). Showing custom holidays only.")
+            log.warning("_get_holidays: %s", lib_warning)
+
+        if lib_available:
+            try:
+                kwargs: Dict[str, Any] = {"years": year}
+                if subdiv:
+                    kwargs["subdiv"] = subdiv
+                h = _holidays.country_holidays(country, **kwargs)
+                lib_entries = [
+                    {"date": str(date), "name": name, "country": country, "source": "library"}
+                    for date, name in sorted(h.items())
+                ]
+                # Persist to disk cache
+                try:
+                    save_library_cache(year, country, lib_entries, subdiv)
+                except Exception as exc:
+                    log.warning("_get_holidays: could not write cache: %s", exc)
+            except Exception as exc:
+                lib_warning = str(exc)
+                log.error("_get_holidays: library fetch failed: %s", exc)
 
         # ── Merge with custom holidays and return ─────────────────────────
+        # Always include custom entries even if the library failed/is absent.
         try:
             result = get_all_holidays(year, country, subdiv)
         except Exception:
-            result = lib_entries   # fallback: library only
+            # Fallback: combine manually
+            country_up = country.upper()
+            custom = [
+                e for e in load_custom()
+                if (
+                    e["date"].startswith(str(year))
+                    and e.get("country", "CUSTOM") in ("CUSTOM", country_up)
+                )
+            ]
+            combined = {f"{e['date']}|{e['name']}": e for e in lib_entries}
+            for e in custom:
+                combined[f"{e['date']}|{e['name']}"] = e
+            result = sorted(combined.values(), key=lambda e: e["date"])
+
+        if lib_warning and not lib_entries:
+            # Surface the warning but still return whatever custom entries exist
+            self._json({"warning": lib_warning, "entries": result})
+            return
 
         self._json(result)
 
