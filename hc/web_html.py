@@ -2916,8 +2916,14 @@ async function loadHolidays(){
     if(subdiv) url += `&subdiv=${encodeURIComponent(subdiv)}`;
 
     const data = await fetch(url).then(r=>r.json());
-    if(!Array.isArray(data)){ throw new Error(data.error||'bad response'); }
-    _hdData   = data;
+    let _hdWarning = null;
+    if(!Array.isArray(data)){
+      if(data.warning){ _hdWarning=data.warning; _hdData=Array.isArray(data.entries)?data.entries:[]; }
+      else { throw new Error(data.error||'bad response'); }
+    } else {
+      _hdData = data;
+    }
+
     _hdLoaded = true;
     const today = new Date().toISOString().slice(0,10);
 
@@ -2934,11 +2940,17 @@ async function loadHolidays(){
 
     // Render list
     const list = document.getElementById('hd-list');
-    if(!_hdData.length){
+    if(_hdWarning){
+      const warnHtml='<div style="padding:8px 14px;color:var(--yellow);font-size:12px;border-bottom:1px solid var(--border)">⚠ '+esc(_hdWarning)+'</div>';
+      if(!_hdData.length){ list.innerHTML=warnHtml; return; }
+      list.innerHTML=warnHtml;
+    } else if(!_hdData.length){
       list.innerHTML='<div style="padding:14px;text-align:center;color:var(--text3);font-size:12px">No holiday data for '+esc(countryName)+'</div>';
       return;
+    } else {
+      list.innerHTML='';
     }
-    list.innerHTML = _hdData.map(h=>{
+    list.innerHTML += _hdData.map(h=>{
       const isPast   = h.date < today;
       const isToday  = h.date === today;
       const isCustom = (h.source === 'custom');
