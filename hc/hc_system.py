@@ -55,7 +55,7 @@ def _state_dir() -> Path:
 
 
 def _counter_file() -> Path:
-    return _state_dir() / "validation_failures.json"
+    return _state_dir() / "validation_failures.hcf"
 
 
 def _lock_file() -> Path:
