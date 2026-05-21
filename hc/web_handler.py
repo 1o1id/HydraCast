@@ -895,9 +895,9 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
 
     def _get_mail_config(self) -> None:
         """Return the current mail_config.hcf contents (client_secret redacted)."""
-        from hc.constants import BASE_DIR
+        from hc.constants import CONFIG_DIR
         import json as _json
-        path = BASE_DIR() / "mail_config.hcf"
+        path = CONFIG_DIR() / "mail_config.hcf"
         _DEFAULTS = {
             "enabled": False,
             "tenant_id": "", "client_id": "", "client_secret": "",
@@ -1887,12 +1887,12 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
 
         elif action == "save_mail_config":
             try:
-                from hc.constants import BASE_DIR
+                from hc.constants import CONFIG_DIR
                 import json as _json
                 to_addrs  = data.get("to_addrs", [])
                 if not isinstance(to_addrs, list) or not to_addrs:
                     raise ValueError("to_addrs must be a non-empty list")
-                path = BASE_DIR() / "mail_config.hcf"
+                path = CONFIG_DIR() / "mail_config.hcf"
                 # Preserve the stored client_secret if the client sent the redaction placeholder
                 client_secret = str(data.get("client_secret", ""))
                 if client_secret in ("••••••••", ""):
@@ -2362,7 +2362,7 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
 
             # ── Mail config (password redacted for safety) ───────────────────
             if include.get("mail", True):
-                p = BASE_DIR() / "mail_config.hcf"
+                p = CONFIG_DIR() / "mail_config.hcf"
                 try:
                     if p.exists():
                         mc = _json.loads(p.read_text(encoding="utf-8"))
@@ -2476,7 +2476,7 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
             # ── Mail config (password intentionally absent — user must re-enter) ──
             if "mail_config" in payload:
                 try:
-                    p = BASE_DIR() / "mail_config.hcf"
+                    p = CONFIG_DIR() / "mail_config.hcf"
                     existing: Dict[str, Any] = {}
                     try:
                         if p.exists():
