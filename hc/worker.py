@@ -1511,13 +1511,33 @@ class StreamWorker:
         buf = getattr(my_proc, "_stderr_buf", None)
         stderr_txt = "\n".join(buf) if buf else ""
 
+        # ── Classify the exit code ───────────────────────────────────────────
+        # Exit code 4294967264 is -32 (EPIPE / Broken pipe) as an unsigned
+        # 32-bit integer — Windows returns unsigned codes.  When this code
+        # arrives with "Broken pipe" in stderr it means FFmpeg lost its RTSP
+        # push connection because MediaMTX closed the session at the end of a
+        # loop or after a clean seek.  This is normal behaviour for a
+        # single-file looping stream and should NOT be treated as an error.
+        _is_broken_pipe = (
+            ret == 4294967264                    # -32 unsigned 32-bit (Windows)
+            or ret == -32                        # signed (Linux/macOS)
+        ) and ("broken pipe" in stderr_txt.lower() or not stderr_txt)
+
+        # Treat broken-pipe-on-loop as a clean exit so the stream restarts
+        # quietly without ERROR status or email alerts.
+        _clean_exit = ret in (0, 255) or _is_broken_pipe
+
         self._log(f"FFmpeg process exited with code {ret}.")
         if stderr_txt:
-            self._log(f"FFmpeg stderr: {stderr_txt[:400]}", "WARN" if ret == 0 else "ERROR")
+            self._log(
+                f"FFmpeg stderr: {stderr_txt[:400]}",
+                "INFO" if _is_broken_pipe else ("WARN" if ret == 0 else "ERROR"),
+            )
 
         # Save position on clean/normal exits only
-        if ret in (0, 255):
-            self._save_resume_position()
+        if _clean_exit:
+            if not _is_broken_pipe:          # broken-pipe = didn't finish cleanly
+                self._save_resume_position()
         else:
             self._log(
                 f"Skipping resume save on error exit (code {ret}) "
@@ -1529,7 +1549,7 @@ class StreamWorker:
         # Only advance on a clean exit (0 or 255).  On an error exit, let
         # _auto_restart handle recovery via a full _do_start — advancing
         # the playlist into a broken MediaMTX session just cascades failures.
-        if (ret in (0, 255)
+        if (_clean_exit
                 and not self.state.oneshot_active
                 and len(self.state.config.playlist) > 1):
             self._advance_playlist()
@@ -1594,11 +1614,14 @@ class StreamWorker:
                         "All next playlist files are missing or unreadable.", "ERROR"
                     )
 
-        if ret in (0, 255):
+        if _clean_exit:
             self.state.status = StreamStatus.STOPPED
-            self._log(f"FFmpeg exited normally (code {ret}).")
-            # Only alert if this was NOT a deliberate stop
-            if not self._stop.is_set() and not self.state.oneshot_active:
+            if _is_broken_pipe:
+                self._log("FFmpeg exited: broken pipe (normal end-of-loop) — restarting.")
+            else:
+                self._log(f"FFmpeg exited normally (code {ret}).")
+            # Only alert if this was NOT a deliberate stop, and not a routine loop restart
+            if not self._stop.is_set() and not self.state.oneshot_active and not _is_broken_pipe:
                 try:
                     from hc.mailer import send_stop_alert
                     send_stop_alert(
@@ -1609,6 +1632,9 @@ class StreamWorker:
                     )
                 except Exception as _mail_exc:
                     log.debug("mailer hook error: %s", _mail_exc)
+            # Auto-restart on broken-pipe (loop end) just like a clean exit
+            if _is_broken_pipe and not self._stop.is_set():
+                self._auto_restart()
         else:
             self.state.status    = StreamStatus.ERROR
             self.state.error_msg = (
