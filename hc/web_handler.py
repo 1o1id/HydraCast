@@ -328,23 +328,21 @@ def _active_event_name(st, cfg, mgr) -> Optional[str]:
     Logic (evaluated in order):
 
     1.  If oneshot IS active AND current_file is already populated
-        -> return None (file name already visible via current_file).
+        -> return None (the file name is already visible via current_file; no
+           need to duplicate it in active_event).
 
-    2.  If oneshot IS active AND current_file is None:
-        a.  Check st.active_oneshot_event — set by the worker the moment it
-            starts playing a oneshot file. This is ground truth (same attribute
-            used by _get_streams in web_handlers_get.py).
-        b.  Fall back: played events whose play_at <= now (past/present only).
-            Events with a future play_at that happen to have played=True are
-            stale carry-overs from a previous run and must be excluded — they
-            are the root cause of showing "_THURSDAY_.mp4" instead of the file
-            that was just fired with fire_event_now.
-        c.  Last resort: any played event regardless of play_at.
+    2.  If oneshot IS active AND current_file is None
+        -> the worker does not expose the oneshot path through current_file().
+           Fall back: look for the in-flight event for this stream.
+           - First try events where ev.played is False (event fired but worker
+             has not yet marked it done).
+           - If none found (worker marks played=True on trigger, not on finish),
+             take the most recently fired event (highest play_at, played=True).
 
     3.  No oneshot active
-        -> show the next pending (unplayed) event name, or — if current_file is
-           also None during a brief post-event resume transition — show the
-           most recently played past event as a transient placeholder.
+        -> show the next pending (unplayed) event name, or - if current_file is
+           also None during a brief post-event resume transition - show the
+           most recently played event name as a transient placeholder.
     """
     oneshot_active = bool(getattr(st, "oneshot_active", False))
     cf_raw = (
@@ -353,62 +351,43 @@ def _active_event_name(st, cfg, mgr) -> Optional[str]:
         else getattr(st, "current_file", None)
     )
     stream_events = [ev for ev in mgr.events if ev.stream_name == cfg.name]
-    now_dt = datetime.now()
 
     if oneshot_active:
         if cf_raw:
-            # current_file is already shown — active_event not needed
+            # current_file is already shown -- active_event not needed
             return None
-
-        # ── Strategy 1: worker-set attribute (ground truth) ──────────────────
-        # play_oneshot() stores the event object on st.active_oneshot_event;
-        # this is the same attribute _get_streams (web_handlers_get.py) uses.
+        # current_file is None: worker doesn't expose the oneshot path via
+        # current_file().  Use the live active_oneshot_event attribute that
+        # play_oneshot() sets directly on the state object — this is the
+        # exact event currently playing, regardless of played/unplayed status.
         active_ev = getattr(st, "active_oneshot_event", None)
         if active_ev is not None:
             return active_ev.file_path.name
-
-        # ── Strategy 2: most-recently-fired past event ────────────────────────
-        # Filter to played=True AND play_at <= now to exclude future-scheduled
-        # events that have played=True from a previous session.
-        past_played = sorted(
-            (ev for ev in stream_events if ev.played and ev.play_at <= now_dt),
-            key=lambda e: e.play_at,
-            reverse=True,
-        )
-        if past_played:
-            return past_played[0].file_path.name
-
-        # ── Strategy 3: last resort — any played event ────────────────────────
-        all_played = sorted(
+        # Fallback (active_oneshot_event not yet set or already cleared):
+        # take the most recently fired event (highest play_at, played=True).
+        played_events = sorted(
             (ev for ev in stream_events if ev.played),
             key=lambda e: e.play_at,
             reverse=True,
         )
-        return all_played[0].file_path.name if all_played else None
+        return played_events[0].file_path.name if played_events else None
 
-    # ── No oneshot active — show next pending event ───────────────────────────
+    # No oneshot active -- show next pending event.
     pending = next(
         (ev.file_path.name for ev in stream_events if not ev.played),
         None,
     )
     if pending:
         return pending
-
-    # Brief resume transition: current_file is None, show last played past event
+    # If current_file is also None (brief resume transition), use the last
+    # played event as a transient placeholder so the card isn't blank.
     if not cf_raw:
-        past_played = sorted(
-            (ev for ev in stream_events if ev.played and ev.play_at <= now_dt),
-            key=lambda e: e.play_at,
-            reverse=True,
-        )
-        if past_played:
-            return past_played[0].file_path.name
-        all_played = sorted(
+        played_events = sorted(
             (ev for ev in stream_events if ev.played),
             key=lambda e: e.play_at,
             reverse=True,
         )
-        return all_played[0].file_path.name if all_played else None
+        return played_events[0].file_path.name if played_events else None
     return None
 
 
@@ -680,13 +659,20 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                 "oneshot_active": bool(getattr(st, "oneshot_active", False)),
                 # current_file() returns the full Path of what FFmpeg is playing.
                 # We expose only the filename (.name). Works for both playlist and oneshot.
+                # When a one-shot event is active the playlist index still points to the
+                # compliance/playlist file — suppress current_file so the UI always
+                # shows active_event (the actual oneshot filename) instead.
                 "current_file":   (
-                    Path(cf).name
-                    if (cf := (
-                        st.current_file()
-                        if callable(getattr(st, "current_file", None))
-                        else getattr(st, "current_file", None)
-                    )) else None
+                    None
+                    if bool(getattr(st, "oneshot_active", False))
+                    else (
+                        Path(cf).name
+                        if (cf := (
+                            st.current_file()
+                            if callable(getattr(st, "current_file", None))
+                            else getattr(st, "current_file", None)
+                        )) else None
+                    )
                 ),
                 # active_event: the filename to display when current_file is unavailable.
                 #
@@ -1003,9 +989,13 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
         cfg = st.config
         oneshot_active = bool(getattr(st, "oneshot_active", False))
         _cf_raw = (
-            st.current_file()
-            if callable(getattr(st, "current_file", None))
-            else getattr(st, "current_file", None)
+            None  # suppress playlist path during oneshot
+            if oneshot_active
+            else (
+                st.current_file()
+                if callable(getattr(st, "current_file", None))
+                else getattr(st, "current_file", None)
+            )
         )
         self._json({
             "name":           cfg.name,
