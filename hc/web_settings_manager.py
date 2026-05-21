@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 _DEFAULTS: Dict[str, Any] = {
     "holiday_country": "US",
     "holiday_subdiv":  None,
+    "accent_color":    "#b87333",   # copper/bronze — matches the default CSS --accent
 }
 
 
