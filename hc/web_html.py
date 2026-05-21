@@ -1698,11 +1698,7 @@ select option{background:var(--bg3)}
             <option value="ZW">ZW — Zimbabwe</option>
           </select>
         </div>
-        <div class="fg">
-          <label>State / Province <span style="font-weight:400;color:var(--text3)">optional</span></label>
-          <input id="hol-subdiv" placeholder="e.g. CA, NSW, ON…"
-            title="Optional subdivision code for regional holidays. Leave blank for national-only.">
-        </div>
+
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:20px">
         <button class="btn g" onclick="saveHolidaySettings()" title="Save holiday country to disk">📁 Save</button>
@@ -2872,7 +2868,6 @@ async function loadHolidays(){
     // Fetch current country from settings first
     const settings = await fetch('/api/settings').then(r=>r.json()).catch(()=>({}));
     const country  = (settings.holiday_country||'US').toUpperCase();
-    const subdiv   = settings.holiday_subdiv||null;
     const countryName = _COUNTRY_NAMES[country]||country;
     const flag     = _countryFlag(country);
     const yr       = new Date().getFullYear();
@@ -2885,7 +2880,6 @@ async function loadHolidays(){
 
     // Build query
     let url = `/api/holidays?year=${yr}&country=${country}`;
-    if(subdiv) url += `&subdiv=${encodeURIComponent(subdiv)}`;
 
     const data = await fetch(url).then(r=>r.json());
     if(!Array.isArray(data)){ throw new Error(data.error||'bad response'); }
@@ -2988,10 +2982,8 @@ async function hdRefresh(){
   try{
     const settings=await fetch('/api/settings').then(r=>r.json()).catch(()=>({}));
     const country=(settings.holiday_country||'US').toUpperCase();
-    const subdiv=settings.holiday_subdiv||null;
     const yr=new Date().getFullYear();
     let url=`/api/holidays?year=${yr}&country=${country}&refresh=1`;
-    if(subdiv) url+=`&subdiv=${encodeURIComponent(subdiv)}`;
     await fetch(url);
   }catch(e){}
   loadHolidays();
@@ -5006,15 +4998,12 @@ async function loadHolidaySettings(){
   try{
     const s=await fetch('/api/settings').then(r=>r.json());
     const ci=document.getElementById('hol-country');
-    const si=document.getElementById('hol-subdiv');
     if(ci) ci.value=s.holiday_country||'US';
-    if(si) si.value=s.holiday_subdiv||'';
   }catch(e){}
 }
 
 async function saveHolidaySettings(){
   const country=(document.getElementById('hol-country')?.value||'').trim();
-  const subdiv=(document.getElementById('hol-subdiv')?.value||'').trim()||null;
   const st=document.getElementById('hol-status');
   if(!country){
     st.textContent='✕ Select a country';st.style.color='var(--red)';return;
@@ -5023,11 +5012,11 @@ async function saveHolidaySettings(){
   try{
     const r=await fetch('/api/settings',{
       method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({holiday_country:country,holiday_subdiv:subdiv})
+      body:JSON.stringify({holiday_country:country})
     });
     const j=await r.json();
     if(j.error) throw new Error(j.error);
-    st.textContent='✓ Saved — '+country+(subdiv?' / '+subdiv:'');
+    st.textContent='✓ Saved — '+country;
     st.style.color='var(--green)';
     toast('Holiday settings saved','ok');
     // Invalidate holidays cache so pill + popup update to the new country
@@ -6528,7 +6517,7 @@ function EventsCalendar() {
   const [streams,    setStreams]     = useState([]);
   const [library,    setLibrary]    = useState([]);
   const [libLoading, setLibLoading] = useState(false);
-  const [settings,   setSettings]   = useState({ holiday_country:"US", holiday_subdiv:null });
+  const [settings,   setSettings]   = useState({ holiday_country:"US" });
   const [holidays,   setHolidays]   = useState({});
   const [holKey,     setHolKey]     = useState("");
   const [loading,    setLoading]    = useState(true);
@@ -6575,11 +6564,9 @@ function EventsCalendar() {
   useEffect(() => {
     if (loading) return;
     const country = settings.holiday_country || "US";
-    const subdiv  = settings.holiday_subdiv  || "";
-    const key = `${year}:${country}:${subdiv}`;
+    const key = `${year}:${country}`;
     if (key === holKey) return;
     const qs = new URLSearchParams({ year, country });
-    if (subdiv) qs.set("subdiv", subdiv);
     fetch(`/api/holidays?${qs}`)
       .then(r=>r.json())
       .then(data => {
