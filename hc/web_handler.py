@@ -431,8 +431,6 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
             "/api/suggest_port":   lambda: self._get_suggest_port(qs),
             "/api/urls_csv":               lambda: self._get_urls_csv(qs),
             "/api/mail_config":              self._get_mail_config,
-            "/api/gmail_oauth2_status":      self._get_gmail_oauth2_status,
-            "/api/microsoft_oauth2_status":  self._get_ms_oauth2_status,
             "/api/upload/status":            lambda: self._get_upload_status(qs),
         }
 
@@ -896,65 +894,27 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
         })
 
     def _get_mail_config(self) -> None:
-        """Return the current mail_config.hcf contents (password redacted)."""
+        """Return the current mail_config.hcf contents (client_secret redacted)."""
         from hc.constants import BASE_DIR
         import json as _json
         path = BASE_DIR() / "mail_config.hcf"
+        _DEFAULTS = {
+            "enabled": False,
+            "tenant_id": "", "client_id": "", "client_secret": "",
+            "from_addr": "", "to_addrs": [],
+            "on_error": True, "on_stop": True, "cooldown_secs": 300,
+        }
         try:
             if path.exists():
                 cfg = _json.loads(path.read_text(encoding="utf-8"))
-                # Redact the password so it never crosses the wire in plain text.
-                if "password" in cfg and cfg["password"]:
-                    cfg["password"] = "••••••••"
-                # Tell the UI whether a Gmail token already exists
-                from hc.mailer import get_oauth2_flow_status
-                status = get_oauth2_flow_status()
-                cfg["oauth2_token_exists"] = status["token_exists"]
-                # Add Microsoft OAuth2 token status
-                try:
-                    from hc.mailer import get_microsoft_oauth2_status
-                    ms_status = get_microsoft_oauth2_status(cfg)
-                    cfg["ms_token_exists"] = ms_status.get("token_exists", False)
-                except Exception:
-                    cfg["ms_token_exists"] = False
+                # Redact the secret so it never crosses the wire in plain text.
+                if cfg.get("client_secret"):
+                    cfg["client_secret"] = "••••••••"
                 self._json(cfg)
             else:
-                # Return template defaults so the form is pre-filled sensibly.
-                self._json({
-                    "enabled": False, "mode": "smtp",
-                    "smtp_host": "smtp.gmail.com",
-                    "smtp_port": 587, "use_tls": True,
-                    "username": "", "password": "",
-                    "from_addr": "", "to_addrs": [],
-                    "on_error": True, "on_stop": True, "cooldown_secs": 300,
-                    "ms_client_id": "", "ms_username": "",
-                    "oauth2_token_exists": False, "ms_token_exists": False,
-                })
+                self._json(_DEFAULTS)
         except Exception as exc:
             self._json({"error": str(exc)}, 500)
-
-    def _get_gmail_oauth2_status(self) -> None:
-        """Return the current OAuth2 flow status (polled by UI while auth is in progress)."""
-        try:
-            from hc.mailer import get_oauth2_flow_status
-            self._json(get_oauth2_flow_status())
-        except Exception as exc:
-            self._json({"status": "error", "error": str(exc), "token_exists": False})
-
-    def _get_ms_oauth2_status(self) -> None:
-        """Return Microsoft OAuth2 device-code flow status and token presence."""
-        try:
-            from hc.constants import BASE_DIR
-            import json as _json
-            cfg: dict = {}
-            try:
-                cfg = _json.loads((BASE_DIR() / "mail_config.hcf").read_text(encoding="utf-8"))
-            except Exception:
-                pass
-            from hc.mailer import get_microsoft_oauth2_status
-            self._json(get_microsoft_oauth2_status(cfg))
-        except Exception as exc:
-            self._json({"status": "error", "error": str(exc), "token_exists": False})
 
     def _get_check_port(self, qs: Dict[str, Any]) -> None:
         """
@@ -1929,42 +1889,32 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
             try:
                 from hc.constants import BASE_DIR
                 import json as _json
-                mode      = str(data.get("mode", "smtp")).strip()
                 to_addrs  = data.get("to_addrs", [])
                 if not isinstance(to_addrs, list) or not to_addrs:
                     raise ValueError("to_addrs must be a non-empty list")
-                smtp_port = int(data.get("smtp_port", 587))
-                if not (1 <= smtp_port <= 65535):
-                    raise ValueError(f"Invalid SMTP port: {smtp_port}")
                 path = BASE_DIR() / "mail_config.hcf"
-                # Preserve the stored password if the client sent the redaction placeholder
-                password = str(data.get("password", ""))
-                if password in ("••••••••", ""):
+                # Preserve the stored client_secret if the client sent the redaction placeholder
+                client_secret = str(data.get("client_secret", ""))
+                if client_secret in ("••••••••", ""):
                     try:
                         existing = _json.loads(path.read_text(encoding="utf-8"))
-                        password = existing.get("password", "")
+                        client_secret = existing.get("client_secret", "")
                     except Exception:
-                        password = ""
+                        client_secret = ""
                 cfg = {
                     "enabled":       bool(data.get("enabled", False)),
-                    "mode":          mode,
+                    "tenant_id":     str(data.get("tenant_id", "")).strip(),
+                    "client_id":     str(data.get("client_id", "")).strip(),
+                    "client_secret": client_secret,
+                    "from_addr":     str(data.get("from_addr", "")).strip(),
                     "to_addrs":      [str(a).strip() for a in to_addrs if str(a).strip()],
                     "on_error":      bool(data.get("on_error", True)),
                     "on_stop":       bool(data.get("on_stop", True)),
                     "cooldown_secs": max(0, int(data.get("cooldown_secs", 300))),
-                    # SMTP fields (kept even in OAuth2 mode so switching back works)
-                    "smtp_host":     str(data.get("smtp_host", "")).strip(),
-                    "smtp_port":     smtp_port,
-                    "use_tls":       bool(data.get("use_tls", True)),
-                    "username":      str(data.get("username", "")).strip(),
-                    "password":      password,
-                    "from_addr":     str(data.get("from_addr", "")).strip(),
-                    # Microsoft OAuth2 fields
-                    "ms_client_id":  str(data.get("ms_client_id", "")).strip(),
-                    "ms_username":   str(data.get("ms_username", "")).strip(),
                 }
                 path.write_text(_json.dumps(cfg, indent=4, ensure_ascii=False), encoding="utf-8")
-                log.info("mail_config.hcf updated via Web UI (mode=%s enabled=%s)", mode, cfg["enabled"])
+                log.info("mail_config.hcf updated via Web UI (tenant=%s enabled=%s)",
+                         cfg["tenant_id"][:8] or "—", cfg["enabled"])
                 self._json({"ok": True, "msg": "mail_config.hcf saved"})
             except Exception as exc:
                 self._json({"ok": False, "msg": str(exc)})
@@ -1980,67 +1930,6 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                     self._json({"ok": False, "msg": err or "Test failed — check server logs."})
             except Exception as exc:
                 self._json({"ok": False, "msg": f"Test error: {exc}"})
-
-        elif action == "gmail_oauth2_start":
-            try:
-                from hc.mailer import start_gmail_oauth2_flow
-                ok, msg = start_gmail_oauth2_flow()
-                self._json({"ok": ok, "msg": msg})
-            except Exception as exc:
-                self._json({"ok": False, "msg": str(exc)})
-
-        elif action == "gmail_oauth2_revoke":
-            try:
-                from hc.mailer import revoke_gmail_token
-                ok, msg = revoke_gmail_token()
-                self._json({"ok": ok, "msg": msg})
-            except Exception as exc:
-                self._json({"ok": False, "msg": str(exc)})
-
-        elif action == "microsoft_oauth2_start":
-            try:
-                client_id = str(data.get("ms_client_id", "")).strip()
-                if not client_id:
-                    # Fall back to value already saved in mail_config.hcf
-                    from hc.constants import BASE_DIR
-                    import json as _json
-                    try:
-                        saved = _json.loads((BASE_DIR() / "mail_config.hcf").read_text("utf-8"))
-                        client_id = saved.get("ms_client_id", "").strip()
-                    except Exception:
-                        pass
-                if not client_id:
-                    self._json({"ok": False, "msg": "Enter Application (Client) ID and save config first."})
-                    return
-                from hc.mailer import start_microsoft_oauth2_flow
-                ok, instructions = start_microsoft_oauth2_flow(client_id)
-                if ok:
-                    from hc.mailer import _ms_flow_state  # type: ignore[attr-defined]
-                    self._json({
-                        "ok":              True,
-                        "msg":             instructions,
-                        "user_code":       _ms_flow_state.get("user_code", ""),
-                        "verification_uri": _ms_flow_state.get("verification_uri", "https://microsoft.com/devicelogin"),
-                    })
-                else:
-                    self._json({"ok": False, "msg": instructions})
-            except Exception as exc:
-                self._json({"ok": False, "msg": str(exc)})
-
-        elif action == "microsoft_oauth2_revoke":
-            try:
-                from hc.constants import BASE_DIR
-                import json as _json
-                cfg: dict = {}
-                try:
-                    cfg = _json.loads((BASE_DIR() / "mail_config.hcf").read_text("utf-8"))
-                except Exception:
-                    pass
-                from hc.mailer import revoke_microsoft_token
-                ok, msg = revoke_microsoft_token(cfg)
-                self._json({"ok": ok, "msg": msg})
-            except Exception as exc:
-                self._json({"ok": False, "msg": str(exc)})
 
         elif action == "backup":
             self._handle_backup(data)
