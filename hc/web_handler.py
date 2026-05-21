@@ -1965,8 +1965,12 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
             self._handle_save_media_roots(data)
 
         elif action == "holidays/custom":
-            # POST /api/holidays/custom — add a user-defined holiday
-            self._post_holidays_custom(raw)
+            # POST /api/holidays/custom — add a user-defined holiday.
+            # _dispatch only receives the already-parsed `data` dict, not the
+            # original raw bytes.  Re-serialise so _post_holidays_custom can
+            # parse it the same way regardless of call path.
+            import json as _json
+            self._post_holidays_custom(_json.dumps(data).encode("utf-8"))
 
         elif action == "settings":
             # POST /api/settings — persist settings; accepts flat or grouped payload.
@@ -1983,6 +1987,17 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
             except Exception as exc:
                 log.error("POST /api/settings: %s", exc)
                 self._json({"error": str(exc)}, 500)
+
+        elif action == "reset_settings":
+            # POST /api/reset_settings — wipe persisted settings and return factory defaults.
+            from hc.web_settings_manager import reset_settings
+            try:
+                defaults = reset_settings()
+                log.info("App settings reset to factory defaults via Web UI")
+                self._json({"ok": True, "msg": "Settings reset to factory defaults.", "values": defaults})
+            except Exception as exc:
+                log.error("POST /api/reset_settings: %s", exc)
+                self._json({"ok": False, "msg": str(exc)})
 
         elif action == "events/bulk":
             # POST /api/events/bulk — create one OneShotEvent per stream entry
