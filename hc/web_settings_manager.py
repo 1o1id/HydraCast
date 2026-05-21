@@ -18,6 +18,8 @@ _DEFAULTS: Dict[str, Any] = {
     "holiday_country": "US",
     "holiday_subdiv":  None,
     "accent_color":    "#b87333",   # copper/bronze — matches the default CSS --accent
+    "brand_name":      "",          # custom app name shown in topbar; empty = use server default
+    "brand_logo":      "",          # base64 data-URL or absolute URL for the topbar logo
 }
 
 
