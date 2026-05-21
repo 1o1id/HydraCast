@@ -1564,14 +1564,66 @@ select option{background:var(--bg3)}
         <button class="btn b" onclick="updateSysInfo()" style="width:100%;justify-content:center" title="Refresh CPU, RAM and active stream count">↻ Refresh Info</button>
       </div>
     </div>
+    <!-- Accent Color -->
+    <div class="setting-card">
+      <h3>Accent Color</h3>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.6">
+        Customise the interface highlight colour used for buttons, borders, and focus rings.
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap">
+        <input type="color" id="accent-color-picker" value="#b87333"
+          style="width:44px;height:44px;padding:2px;border-radius:8px;border:1px solid var(--border);
+                 background:var(--bg3);cursor:pointer;flex-shrink:0"
+          oninput="accentPreview(this.value)"
+          title="Pick your accent colour">
+        <div style="flex:1;min-width:120px">
+          <input id="accent-color-hex" value="#b87333" maxlength="7"
+            style="font-family:var(--font-mono);font-size:13px;text-transform:uppercase;letter-spacing:0.06em"
+            placeholder="#b87333"
+            oninput="if(/^#[0-9a-fA-F]{6}$/.test(this.value)){document.getElementById('accent-color-picker').value=this.value;accentPreview(this.value);}"
+            title="Enter a hex colour code">
+        </div>
+      </div>
+      <!-- Preset swatches -->
+      <div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:14px">
+        <button onclick="setAccentSwatch('#b87333')" title="Copper (default)"
+          style="width:22px;height:22px;border-radius:5px;background:#b87333;border:2px solid transparent;cursor:pointer;padding:0;transition:transform 0.15s"
+          onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform=''"></button>
+        <button onclick="setAccentSwatch('#4f8ef7')" title="Blue"
+          style="width:22px;height:22px;border-radius:5px;background:#4f8ef7;border:2px solid transparent;cursor:pointer;padding:0;transition:transform 0.15s"
+          onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform=''"></button>
+        <button onclick="setAccentSwatch('#7ac97a')" title="Green"
+          style="width:22px;height:22px;border-radius:5px;background:#7ac97a;border:2px solid transparent;cursor:pointer;padding:0;transition:transform 0.15s"
+          onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform=''"></button>
+        <button onclick="setAccentSwatch('#e05c6a')" title="Red"
+          style="width:22px;height:22px;border-radius:5px;background:#e05c6a;border:2px solid transparent;cursor:pointer;padding:0;transition:transform 0.15s"
+          onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform=''"></button>
+        <button onclick="setAccentSwatch('#c97fd4')" title="Purple"
+          style="width:22px;height:22px;border-radius:5px;background:#c97fd4;border:2px solid transparent;cursor:pointer;padding:0;transition:transform 0.15s"
+          onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform=''"></button>
+        <button onclick="setAccentSwatch('#e0a030')" title="Amber"
+          style="width:22px;height:22px;border-radius:5px;background:#e0a030;border:2px solid transparent;cursor:pointer;padding:0;transition:transform 0.15s"
+          onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform=''"></button>
+        <button onclick="setAccentSwatch('#4fc0c0')" title="Teal"
+          style="width:22px;height:22px;border-radius:5px;background:#4fc0c0;border:2px solid transparent;cursor:pointer;padding:0;transition:transform 0.15s"
+          onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform=''"></button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn g" onclick="saveAccentColor()" title="Save accent colour to server and persist across sessions">📁 Save</button>
+        <button class="btn" onclick="setAccentSwatch('#b87333')" title="Reset to default copper colour">↺ Default</button>
+        <div id="accent-status" style="font-size:11px;color:var(--text3)"></div>
+      </div>
+    </div>
   </div>
 
-  <!-- Holiday Country -->
+  <!-- end settings-grid -->
   <div style="margin-top:4px">
-    <div class="section-hdr"><h2>Holiday Country</h2><span class="sep"></span>
-      <button class="btn b" onclick="loadHolidaySettings()" title="Reload holiday settings from server">↻ Load</button>
+    <div class="section-hdr"><h2>Holidays</h2><span class="sep"></span>
+      <button class="btn b" onclick="loadHolidaySettings();loadCustomHolidays();" title="Reload holiday settings from server">↻ Load</button>
     </div>
     <div class="card card-body" style="padding:16px">
+      <!-- ── Public Holiday Country ── -->
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.09em;color:var(--accent);margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border)">Public Holiday Country</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.7">
         Sets the country used to show public holidays in the Events calendar.
         Use the two-letter ISO country code (e.g. <code style="color:var(--accent-light)">US</code>, <code style="color:var(--accent-light)">BD</code>, <code style="color:var(--accent-light)">GB</code>, <code style="color:var(--accent-light)">AU</code>).
@@ -1652,19 +1704,13 @@ select option{background:var(--bg3)}
             title="Optional subdivision code for regional holidays. Leave blank for national-only.">
         </div>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:20px">
         <button class="btn g" onclick="saveHolidaySettings()" title="Save holiday country to disk">📁 Save</button>
         <div id="hol-status" style="font-size:11px;color:var(--text3)"></div>
       </div>
-    </div>
-  </div>
 
-  <!-- Custom Holidays -->
-  <div style="margin-top:4px">
-    <div class="section-hdr"><h2>Custom Holidays</h2><span class="sep"></span>
-      <button class="btn b" onclick="loadCustomHolidays()" title="Reload custom holidays from disk">↻ Load</button>
-    </div>
-    <div class="card card-body" style="padding:16px">
+      <!-- ── Custom Holidays ── -->
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.09em;color:var(--accent);margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border)">Custom Holidays</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.7">
         Add your own holidays to overlay on the Events calendar alongside public holidays.
         Custom holidays are stored locally and are never overwritten by library updates.
@@ -1715,155 +1761,74 @@ select option{background:var(--bg3)}
     </div>
     <div class="card card-body" style="padding:16px">
 
-      <!-- Mode tabs -->
-      <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:1px solid var(--border)">
-        <button id="ml-tab-gmail" class="nav-tab active" onclick="switchMailMode('gmail_oauth2')"
-          style="padding:8px 18px;font-size:12px" title="Use Gmail via OAuth2 — no password stored">
-          <span class="tab-dot"></span>Gmail (OAuth2)
-        </button>
-        <button id="ml-tab-ms" class="nav-tab" onclick="switchMailMode('microsoft_oauth2')"
-          style="padding:8px 18px;font-size:12px" title="Use Outlook / Office 365 via Microsoft OAuth2">
-          <span class="tab-dot"></span>Microsoft (OAuth2)
-        </button>
-        <button id="ml-tab-smtp" class="nav-tab" onclick="switchMailMode('smtp')"
-          style="padding:8px 18px;font-size:12px" title="Use Yahoo Mail, Gmail App Password, or a custom SMTP server">
-          <span class="tab-dot"></span>SMTP (Yahoo / Custom)
-        </button>
+      <!-- Info banner -->
+      <div style="font-size:12px;color:var(--text2);margin-bottom:16px;line-height:1.8;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px">
+        Sends alerts via <b style="color:var(--accent-light)">Microsoft Graph API</b> (Outlook / Office 365).<br>
+        Requires an <b>Azure App Registration</b> with <code style="color:var(--accent-light)">Mail.Send</code> (Application permission) and admin consent.<br>
+        <a href="https://portal.azure.com" target="_blank" style="color:var(--blue)">portal.azure.com</a>
+        → App registrations → New → Certificates &amp; secrets → API permissions → Microsoft Graph → Application → Mail.Send
       </div>
-      <input type="hidden" id="ml-mode" value="gmail_oauth2">
 
-      <!-- ── Gmail OAuth2 panel ── -->
-      <div id="ml-panel-gmail">
-        <div style="font-size:11px;color:var(--text3);margin-bottom:14px;line-height:1.8">
-          Sign in with Google — no passwords stored. Requires
-          <code style="color:var(--accent-light)">gmail_client_secret.json</code> in the HydraCast base directory.<br>
-          Libraries needed: <code style="color:var(--accent-light)">pip install google-auth google-auth-oauthlib google-api-python-client</code>
+      <!-- Azure credentials -->
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.09em;color:var(--accent);margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border)">Azure App Credentials</div>
+      <div class="form-grid" style="grid-template-columns:1fr 1fr;margin-bottom:14px">
+        <div class="fg">
+          <label>Tenant ID <span style="color:var(--text3);font-weight:400">(Directory ID)</span></label>
+          <input id="ml-tenant-id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off"
+            title="Azure Active Directory Tenant (Directory) ID">
         </div>
-        <div id="ml-gmail-status-box" style="padding:10px 14px;border-radius:8px;background:var(--bg3);
-            border:1px solid var(--border);font-size:12px;margin-bottom:14px;display:flex;align-items:center;gap:10px">
-          <span id="ml-gmail-dot" style="width:9px;height:9px;border-radius:50%;background:var(--text3);flex-shrink:0"></span>
-          <span id="ml-gmail-label">Not connected</span>
-          <button class="btn b" style="margin-left:auto" onclick="connectGmail()" title="Open Google sign-in to authorise HydraCast to send email">🔗 Connect Gmail</button>
-          <button class="btn r" id="ml-gmail-revoke" style="display:none" onclick="revokeGmail()" title="Remove stored Gmail OAuth2 credentials">✕ Disconnect</button>
+        <div class="fg">
+          <label>Client ID <span style="color:var(--text3);font-weight:400">(Application ID)</span></label>
+          <input id="ml-client-id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off"
+            title="Azure App Registration Application (Client) ID">
         </div>
-        <div id="ml-gmail-poll-msg" style="font-size:11px;color:var(--yellow);margin-bottom:12px;display:none">
-          ⏳ Waiting for Google sign-in in browser… <button class="btn" style="margin-left:8px" onclick="checkOAuthStatus()" title="Check whether Google sign-in has completed">Check Status</button>
+        <div class="fg">
+          <label>Client Secret</label>
+          <input id="ml-client-secret" type="password" placeholder="••••••••" autocomplete="new-password"
+            title="Client secret value from Certificates &amp; secrets">
+        </div>
+        <div class="fg">
+          <label>From Address <span style="color:var(--text3);font-weight:400">(sender mailbox)</span></label>
+          <input id="ml-from" placeholder="hydracast@yourdomain.com" autocomplete="off"
+            title="The mailbox address the app will send from (must be in your tenant)">
         </div>
       </div>
 
-      <!-- ── Microsoft OAuth2 panel ── -->
-      <div id="ml-panel-ms" style="display:none">
-        <div style="font-size:11px;color:var(--text3);margin-bottom:14px;line-height:1.8">
-          <b style="color:var(--yellow)">⚡ Recommended for Outlook.com / Office 365</b> — fixes the<br>
-          <code style="color:var(--red)">"5.7.139 basic authentication is disabled"</code> SMTP error.<br>
-          Requires <code style="color:var(--accent-light)">pip install msal</code> and a free Azure App Registration.<br>
-          <a href="https://portal.azure.com" target="_blank" style="color:var(--blue)">portal.azure.com</a>
-          → App registrations → New → API permissions → Microsoft Graph → Delegated → Mail.Send
+      <!-- Recipients + options -->
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.09em;color:var(--accent);margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border)">Recipients &amp; Options</div>
+      <div class="form-grid" style="grid-template-columns:1fr auto;align-items:end;margin-bottom:12px">
+        <div class="fg">
+          <label>To Addresses <span style="color:var(--text3);font-weight:400">comma-separated</span></label>
+          <input id="ml-to" placeholder="ops@example.com, alerts@example.com" title="One or more recipient addresses, comma-separated">
         </div>
-        <div class="form-grid" style="grid-template-columns:1fr 1fr;margin-bottom:12px">
-          <div class="fg">
-            <label>Application (Client) ID</label>
-            <input id="ml-ms-client-id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
-          </div>
-          <div class="fg">
-            <label>Your Mailbox Address</label>
-            <input id="ml-ms-username" placeholder="you@outlook.com">
-          </div>
-        </div>
-        <div id="ml-ms-status-box" style="padding:10px 14px;border-radius:8px;background:var(--bg3);
-            border:1px solid var(--border);font-size:12px;margin-bottom:14px;display:flex;align-items:center;gap:10px">
-          <span id="ml-ms-dot" style="width:9px;height:9px;border-radius:50%;background:var(--text3);flex-shrink:0"></span>
-          <span id="ml-ms-label">Not connected</span>
-          <button class="btn b" style="margin-left:auto" onclick="connectMicrosoft()" title="Start Microsoft device sign-in to authorise HydraCast to send email">🔗 Connect Microsoft</button>
-          <button class="btn r" id="ml-ms-revoke" style="display:none" onclick="revokeMicrosoft()" title="Remove stored Microsoft OAuth2 credentials">✕ Disconnect</button>
-        </div>
-        <div id="ml-ms-device-box" style="display:none;background:var(--bg3);border:1px solid rgba(251,191,36,0.5);
-            border-radius:8px;padding:14px;margin-bottom:14px;font-size:12px">
-          <div style="color:var(--yellow);font-weight:600;margin-bottom:8px">🔐 Device Sign-in Required</div>
-          <div>1. Open <a id="ml-ms-uri" href="https://microsoft.com/devicelogin" target="_blank" style="color:var(--blue)">https://microsoft.com/devicelogin</a></div>
-          <div style="margin:6px 0">2. Enter code: <code id="ml-ms-code" style="color:var(--accent-light);font-size:15px;font-weight:700;letter-spacing:3px">——————</code></div>
-          <div style="color:var(--text3)">3. Sign in, then click Check Status below.</div>
-          <button class="btn" style="margin-top:10px" onclick="checkMsOAuthStatus()" title="Check whether Microsoft device sign-in has completed">↻ Check Status</button>
+        <div class="fg">
+          <label>Cooldown <span style="color:var(--text3);font-weight:400">(seconds)</span></label>
+          <input id="ml-cooldown" type="number" value="300" min="0" style="width:90px"
+            title="Minimum seconds between repeated alerts for the same stream">
         </div>
       </div>
-
-      <!-- ── SMTP panel ── -->
-      <div id="ml-panel-smtp" style="display:none">
-        <div style="font-size:11px;color:var(--text3);margin-bottom:14px;line-height:1.8">
-          Works with Yahoo, custom SMTP servers, or Gmail App Password.<br>
-          <b style="color:var(--red)">⚠ Outlook.com / Office 365</b> — use the <b>Microsoft (OAuth2)</b> tab instead; basic SMTP auth is permanently disabled.
-        </div>
-        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;
-            font-size:11px;color:var(--text3);margin-bottom:14px">
-          <b style="color:var(--text2)">Quick presets:</b>&nbsp;
-          <button class="btn" onclick="smtpPreset('yahoo')" style="font-size:10px" title="Fill in Yahoo Mail SMTP settings">Yahoo</button>
-          <button class="btn" onclick="smtpPreset('gmail')" style="font-size:10px" title="Fill in Gmail App Password SMTP settings">Gmail SMTP</button>
-        </div>
-        <div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(200px,1fr));margin-bottom:12px">
-          <div class="fg">
-            <label>SMTP Host</label>
-            <input id="ml-host" placeholder="smtp.mail.yahoo.com">
-          </div>
-          <div class="fg">
-            <label>SMTP Port</label>
-            <input id="ml-port" type="number" placeholder="587" value="587">
-          </div>
-          <div class="fg">
-            <label>Username</label>
-            <input id="ml-user" placeholder="you@yahoo.com" autocomplete="username">
-          </div>
-          <div class="fg">
-            <label>Password / App Password</label>
-            <input id="ml-pass" type="password" placeholder="••••••••" autocomplete="current-password">
-          </div>
-          <div class="fg">
-            <label>From Address</label>
-            <input id="ml-from" placeholder="you@yahoo.com">
-          </div>
-        </div>
-        <div style="display:flex;gap:16px;margin-bottom:12px">
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text2);text-transform:none;letter-spacing:0">
-            <input type="checkbox" id="ml-tls" checked style="width:auto;accent-color:var(--accent)"> Use STARTTLS
-          </label>
+      <div style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:14px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text2);text-transform:none;letter-spacing:0">
+          <input type="checkbox" id="ml-enabled" style="width:auto;accent-color:var(--accent)"> Enabled
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text2);text-transform:none;letter-spacing:0">
+          <input type="checkbox" id="ml-on-error" checked style="width:auto;accent-color:var(--accent)"> Alert on ERROR
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text2);text-transform:none;letter-spacing:0">
+          <input type="checkbox" id="ml-on-stop" checked style="width:auto;accent-color:var(--accent)"> Alert on unexpected stop
+        </label>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        <button class="btn g" onclick="saveMailConfig()" title="Save mail alert configuration to disk">📁 Save Config</button>
+        <div class="fg" style="flex-direction:row;gap:6px;align-items:center;flex:1;min-width:200px">
+          <input id="ml-test-to" placeholder="Test recipient (optional)" style="flex:1" title="Optional: override the To address just for this test email">
+          <button class="btn b" onclick="testMailAlert()" title="Send a test email to verify your mail settings">✉ Send Test</button>
         </div>
       </div>
-
-            <!-- ── Shared settings (both modes) ── -->
-      <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:4px">
-        <div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));margin-bottom:12px">
-          <div class="fg">
-            <label>To Addresses (comma-separated)</label>
-            <input id="ml-to" placeholder="ops@example.com, backup@example.com">
-          </div>
-          <div class="fg">
-            <label>Cooldown (seconds)</label>
-            <input id="ml-cooldown" type="number" placeholder="300" value="300">
-          </div>
-        </div>
-        <div style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:14px">
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text2);text-transform:none;letter-spacing:0">
-            <input type="checkbox" id="ml-enabled" style="width:auto;accent-color:var(--accent)"> Enabled
-          </label>
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text2);text-transform:none;letter-spacing:0">
-            <input type="checkbox" id="ml-on-error" checked style="width:auto;accent-color:var(--accent)"> Alert on ERROR
-          </label>
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text2);text-transform:none;letter-spacing:0">
-            <input type="checkbox" id="ml-on-stop" checked style="width:auto;accent-color:var(--accent)"> Alert on unexpected stop
-          </label>
-        </div>
-        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
-          <button class="btn g" onclick="saveMailConfig()" title="Save mail alert configuration to disk">📁 Save Config</button>
-          <div class="fg" style="flex-direction:row;gap:6px;align-items:center;flex:1;min-width:200px">
-            <input id="ml-test-to" placeholder="Test recipient (optional)" style="flex:1" title="Optional: override the To address just for this test email">
-            <button class="btn b" onclick="testMailAlert()" title="Send a test email to verify your mail settings">✉ Send Test</button>
-          </div>
-        </div>
-        <div id="ml-status" style="font-size:11px;color:var(--text3);margin-top:10px"></div>
-      </div>
+      <div id="ml-status" style="font-size:11px;color:var(--text3);margin-top:10px"></div>
 
     </div>
   </div>
-
   <!-- Media Root Directories -->
   <div style="margin-top:4px" id="media-roots-section">
     <div class="section-hdr">
@@ -4578,114 +4543,53 @@ function applyPollInterval(){
 // ═══════════════════════════════════
 // MAIL CONFIG
 // ═══════════════════════════════════
-const _SMTP_PRESETS={
-  outlook: {host:'smtp-mail.outlook.com', port:587, tls:true},
-  office365:{host:'smtp.office365.com',   port:587, tls:true},
-  yahoo:   {host:'smtp.mail.yahoo.com',   port:587, tls:true},
-  gmail:   {host:'smtp.gmail.com',        port:587, tls:true},
-};
-
-function smtpPreset(key){
-  const p=_SMTP_PRESETS[key];if(!p)return;
-  document.getElementById('ml-host').value=p.host;
-  document.getElementById('ml-port').value=p.port;
-  document.getElementById('ml-tls').checked=p.tls;
-  toast('Preset applied — fill in username & password','info');
-}
-
-function switchMailMode(mode){
-  document.getElementById('ml-mode').value=mode;
-  const isGmail=(mode==='gmail_oauth2');
-  const isMs=(mode==='microsoft_oauth2');
-  const isSmtp=(mode==='smtp');
-  document.getElementById('ml-panel-gmail').style.display=isGmail?'':'none';
-  document.getElementById('ml-panel-ms').style.display=isMs?'':'none';
-  document.getElementById('ml-panel-smtp').style.display=isSmtp?'':'none';
-  document.getElementById('ml-tab-gmail').classList.toggle('active',isGmail);
-  document.getElementById('ml-tab-ms').classList.toggle('active',isMs);
-  document.getElementById('ml-tab-smtp').classList.toggle('active',isSmtp);
-}
-
-function _setGmailUI(tokenExists){
-  const dot=document.getElementById('ml-gmail-dot');
-  const lbl=document.getElementById('ml-gmail-label');
-  const rev=document.getElementById('ml-gmail-revoke');
-  if(tokenExists){
-    dot.style.background='var(--green)';
-    lbl.textContent='Connected — Gmail account authorised';
-    rev.style.display='';
-  } else {
-    dot.style.background='var(--text3)';
-    lbl.textContent='Not connected';
-    rev.style.display='none';
-  }
-}
+// MAIL ALERTS  (Outlook / Microsoft Graph — client credentials)
+// ═══════════════════════════════════
 
 async function loadMailConfig(){
   try{
     const d=await fetch('/api/mail_config').then(r=>r.json());
     if(d.error){document.getElementById('ml-status').textContent='⚠ '+d.error;return;}
 
-    const mode=d.mode||'smtp';
-    switchMailMode(mode);
-
-    // SMTP fields
-    document.getElementById('ml-host').value=d.smtp_host||'smtp.gmail.com';
-    document.getElementById('ml-port').value=d.smtp_port||587;
-    document.getElementById('ml-user').value=d.username||'';
-    document.getElementById('ml-pass').value=d.password||'';
+    document.getElementById('ml-tenant-id').value=d.tenant_id||'';
+    document.getElementById('ml-client-id').value=d.client_id||'';
+    document.getElementById('ml-client-secret').value=d.client_secret||'';
     document.getElementById('ml-from').value=d.from_addr||'';
-    document.getElementById('ml-tls').checked=d.use_tls!==false;
-
-    // Microsoft OAuth2 fields
-    document.getElementById('ml-ms-client-id').value=d.ms_client_id||'';
-    document.getElementById('ml-ms-username').value=d.ms_username||'';
-    _setMsUI(!!d.ms_token_exists);
-
-    // Shared fields
     document.getElementById('ml-to').value=(d.to_addrs||[]).join(', ');
     document.getElementById('ml-cooldown').value=d.cooldown_secs??300;
     document.getElementById('ml-enabled').checked=!!d.enabled;
     document.getElementById('ml-on-error').checked=d.on_error!==false;
     document.getElementById('ml-on-stop').checked=d.on_stop!==false;
 
-    // Gmail OAuth2 status
-    _setGmailUI(!!d.oauth2_token_exists);
-
-    document.getElementById('ml-status').textContent='✓ Config loaded from mail_config.hcf';
-    document.getElementById('ml-status').style.color='var(--green)';
+    const st=document.getElementById('ml-status');
+    st.textContent='✓ Config loaded from mail_config.hcf';
+    st.style.color='var(--green)';
   }catch(e){
-    document.getElementById('ml-status').textContent='Failed to load config';
-    document.getElementById('ml-status').style.color='var(--red)';
+    const st=document.getElementById('ml-status');
+    st.textContent='Failed to load config';
+    st.style.color='var(--red)';
   }
 }
+
 async function saveMailConfig(){
   const toRaw=document.getElementById('ml-to').value;
   const toList=toRaw.split(',').map(s=>s.trim()).filter(Boolean);
   if(!toList.length){toast('Enter at least one To address','err');return;}
-  const mode=document.getElementById('ml-mode').value;
   const payload={
-    mode,
     enabled:document.getElementById('ml-enabled').checked,
+    tenant_id:document.getElementById('ml-tenant-id').value.trim(),
+    client_id:document.getElementById('ml-client-id').value.trim(),
+    client_secret:document.getElementById('ml-client-secret').value,
+    from_addr:document.getElementById('ml-from').value.trim(),
     to_addrs:toList,
     on_error:document.getElementById('ml-on-error').checked,
     on_stop:document.getElementById('ml-on-stop').checked,
     cooldown_secs:parseInt(document.getElementById('ml-cooldown').value)||300,
-    // SMTP fields (kept in file for easy switching)
-    smtp_host:document.getElementById('ml-host').value.trim(),
-    smtp_port:parseInt(document.getElementById('ml-port').value)||587,
-    use_tls:document.getElementById('ml-tls').checked,
-    username:document.getElementById('ml-user').value.trim(),
-    password:document.getElementById('ml-pass').value,
-    from_addr:document.getElementById('ml-from').value.trim(),
-    // Microsoft OAuth2 fields
-    ms_client_id:document.getElementById('ml-ms-client-id').value.trim(),
-    ms_username:document.getElementById('ml-ms-username').value.trim(),
   };
   try{
-    const r=await fetch('/api/save_mail_config',{
+    const r=await fetch('/api/action',{
       method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(payload)
+      body:JSON.stringify({action:'save_mail_config',...payload})
     });
     const j=await r.json();
     toast(j.msg||(j.ok?'Saved':'Error'),j.ok?'ok':'err');
@@ -4700,9 +4604,9 @@ async function testMailAlert(){
   const st=document.getElementById('ml-status');
   st.textContent='Sending test email…';st.style.color='var(--yellow)';
   try{
-    const r=await fetch('/api/test_mail_alert',{
+    const r=await fetch('/api/action',{
       method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(to?{to_addr:to}:{})
+      body:JSON.stringify(Object.assign({action:'test_mail_alert'},to?{to_addr:to}:{}))
     });
     const j=await r.json();
     toast(j.msg||(j.ok?'Test sent':'Failed'),j.ok?'ok':'err');
@@ -4711,135 +4615,77 @@ async function testMailAlert(){
   }catch(e){toast('Test failed','err');st.textContent='Request failed';st.style.color='var(--red)';}
 }
 
-async function connectGmail(){
-  const st=document.getElementById('ml-status');
-  st.textContent='Starting Gmail auth flow…';st.style.color='var(--yellow)';
+// ═══════════════════════════════════
+// ACCENT COLOR
+// ═══════════════════════════════════
+
+function _hexToRgb(hex){
+  const r=parseInt(hex.slice(1,3),16);
+  const g=parseInt(hex.slice(3,5),16);
+  const b=parseInt(hex.slice(5,7),16);
+  return {r,g,b};
+}
+function _lighten(hex, amount){
+  const {r,g,b}=_hexToRgb(hex);
+  const lr=Math.min(255,Math.round(r+(255-r)*amount));
+  const lg=Math.min(255,Math.round(g+(255-g)*amount));
+  const lb=Math.min(255,Math.round(b+(255-b)*amount));
+  return '#'+[lr,lg,lb].map(v=>v.toString(16).padStart(2,'0')).join('');
+}
+
+function accentPreview(hex){
+  if(!/^#[0-9a-fA-F]{6}$/.test(hex)) return;
+  const light=_lighten(hex,0.15);
+  const r=document.documentElement;
+  r.style.setProperty('--accent',hex);
+  r.style.setProperty('--accent-light',light);
+  r.style.setProperty('--accent-gradient',`linear-gradient(135deg,${hex} 0%,${light} 50%,${_lighten(hex,0.1)} 100%)`);
+  r.style.setProperty('--accent-gradient-hover',`linear-gradient(135deg,${_lighten(hex,0.1)} 0%,${_lighten(hex,0.22)} 50%,${light} 100%)`);
+  const picker=document.getElementById('accent-color-picker');
+  const hexIn=document.getElementById('accent-color-hex');
+  if(picker) picker.value=hex;
+  if(hexIn) hexIn.value=hex.toUpperCase();
+}
+
+function setAccentSwatch(hex){
+  accentPreview(hex);
+}
+
+async function saveAccentColor(){
+  const hex=(document.getElementById('accent-color-hex')?.value||'').trim().toUpperCase();
+  if(!/^#[0-9a-fA-F]{6}$/.test(hex)){toast('Enter a valid hex colour (e.g. #b87333)','err');return;}
+  const st=document.getElementById('accent-status');
+  st.textContent='Saving…';st.style.color='var(--yellow)';
   try{
-    const r=await fetch('/api/gmail_oauth2_start',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const r=await fetch('/api/settings',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({accent_color:hex})
+    });
     const j=await r.json();
-    if(j.ok){
-      document.getElementById('ml-gmail-poll-msg').style.display='';
-      st.textContent=j.msg||'Browser opened — sign in with Google.';
-      st.style.color='var(--yellow)';
-    } else {
-      st.textContent='✕ '+j.msg;st.style.color='var(--red)';
-      toast(j.msg,'err');
-    }
-  }catch(e){toast('Connect failed','err');}
-}
-
-async function checkOAuthStatus(){
-  try{
-    const r=await fetch('/api/gmail_oauth2_status').then(res=>res.json());
-    const st=document.getElementById('ml-status');
-    const poll=document.getElementById('ml-gmail-poll-msg');
-    if(r.status==='done'||r.token_exists){
-      poll.style.display='none';
-      _setGmailUI(true);
-      st.textContent='✓ Gmail connected successfully!';st.style.color='var(--green)';
-      toast('Gmail connected!','ok');
-    } else if(r.status==='error'){
-      poll.style.display='none';
-      st.textContent='✕ Auth failed: '+r.error;st.style.color='var(--red)';
-      toast('OAuth2 failed','err');
-    } else {
-      st.textContent='Still waiting for sign-in…';st.style.color='var(--yellow)';
-    }
-  }catch(e){toast('Status check failed','err');}
-}
-
-async function revokeGmail(){
-  if(!confirm('Disconnect Gmail? You will need to re-authorise to send alerts.'))return;
-  try{
-    const r=await fetch('/api/gmail_oauth2_revoke',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-    const j=await r.json();
-    toast(j.msg||(j.ok?'Disconnected':'Error'),j.ok?'ok':'err');
-    if(j.ok) _setGmailUI(false);
-    document.getElementById('ml-status').textContent=j.msg;
-    document.getElementById('ml-status').style.color=j.ok?'var(--green)':'var(--red)';
-  }catch(e){toast('Revoke failed','err');}
-}
-
-
-function _setMsUI(tokenExists){
-  const dot=document.getElementById('ml-ms-dot');
-  const lbl=document.getElementById('ml-ms-label');
-  const rev=document.getElementById('ml-ms-revoke');
-  if(!dot)return;
-  if(tokenExists){
-    dot.style.background='var(--green)';
-    lbl.textContent='Connected — Microsoft account authorised';
-    rev.style.display='';
-  } else {
-    dot.style.background='var(--text3)';
-    lbl.textContent='Not connected';
-    rev.style.display='none';
+    if(j.error) throw new Error(j.error);
+    accentPreview(hex);
+    st.textContent='✓ Saved — '+hex;st.style.color='var(--green)';
+    toast('Accent colour saved','ok');
+  }catch(e){
+    st.textContent='✕ '+e.message;st.style.color='var(--red)';
+    toast('Save failed','err');
   }
 }
 
-async function connectMicrosoft(){
-  const clientId=document.getElementById('ml-ms-client-id').value.trim();
-  const username=document.getElementById('ml-ms-username').value.trim();
-  if(!clientId){toast('Enter Application (Client) ID first','err');return;}
-  if(!username){toast('Enter your mailbox address first','err');return;}
-  // Save config first so the server has client_id
-  await saveMailConfig();
-  const st=document.getElementById('ml-status');
-  st.textContent='Starting Microsoft device-code flow…';st.style.color='var(--yellow)';
+// Apply saved accent colour on page load
+(async function initAccentColor(){
   try{
-    const r=await fetch('/api/microsoft_oauth2_start',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ms_client_id:clientId,ms_username:username})
-    });
-    const j=await r.json();
-    if(j.ok){
-      const box=document.getElementById('ml-ms-device-box');
-      box.style.display='';
-      if(j.user_code) document.getElementById('ml-ms-code').textContent=j.user_code;
-      if(j.verification_uri){
-        const a=document.getElementById('ml-ms-uri');
-        a.href=j.verification_uri; a.textContent=j.verification_uri;
-      }
-      st.textContent='Enter the code at the URL shown above, then click Check Status.';
-      st.style.color='var(--yellow)';
-    } else {
-      st.textContent='✕ '+j.msg;st.style.color='var(--red)';
-      toast(j.msg,'err');
+    const s=await fetch('/api/settings').then(r=>r.json());
+    const hex=(s.accent_color||'#b87333').trim();
+    if(/^#[0-9a-fA-F]{6}$/.test(hex)){
+      accentPreview(hex);
+      const picker=document.getElementById('accent-color-picker');
+      const hexIn=document.getElementById('accent-color-hex');
+      if(picker) picker.value=hex;
+      if(hexIn) hexIn.value=hex.toUpperCase();
     }
-  }catch(e){toast('Connect failed','err');}
-}
-
-async function checkMsOAuthStatus(){
-  try{
-    const r=await fetch('/api/microsoft_oauth2_status').then(res=>res.json());
-    const st=document.getElementById('ml-status');
-    const box=document.getElementById('ml-ms-device-box');
-    if(r.status==='done'||r.token_exists){
-      box.style.display='none';
-      _setMsUI(true);
-      st.textContent='✓ Microsoft connected successfully!';st.style.color='var(--green)';
-      toast('Microsoft connected!','ok');
-    } else if(r.status==='error'){
-      box.style.display='none';
-      st.textContent='✕ Auth failed: '+r.error;st.style.color='var(--red)';
-      toast('Microsoft OAuth2 failed','err');
-    } else {
-      st.textContent='Still waiting for sign-in…';st.style.color='var(--yellow)';
-    }
-  }catch(e){toast('Status check failed','err');}
-}
-
-async function revokeMicrosoft(){
-  if(!confirm('Disconnect Microsoft? You will need to re-authorise to send alerts.'))return;
-  try{
-    const r=await fetch('/api/microsoft_oauth2_revoke',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-    const j=await r.json();
-    toast(j.msg||(j.ok?'Disconnected':'Error'),j.ok?'ok':'err');
-    if(j.ok){_setMsUI(false);document.getElementById('ml-ms-device-box').style.display='none';}
-    document.getElementById('ml-status').textContent=j.msg;
-    document.getElementById('ml-status').style.color=j.ok?'var(--green)':'var(--red)';
-  }catch(e){toast('Revoke failed','err');}
-}
+  }catch(e){}
+})();
 
 // ═══════════════════════════════════
 // MEDIA ROOT DIRECTORIES
