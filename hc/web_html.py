@@ -1135,6 +1135,102 @@ select option{background:var(--bg3)}
 .ev-stream-row select:disabled{opacity:0.35;pointer-events:none}
 
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RESPONSIVE LAYOUT  —  scales from 360 px phone to 4 K monitor
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Large screens (≥ 1400 px): more breathing room ── */
+@media (min-width:1400px){
+  .tab-panel{padding:32px 40px}
+  .topbar{padding:0 40px}
+  .app-footer{padding:7px 40px}
+  table{font-size:14px}
+  .card-body{padding:24px}
+  .card-hdr{padding:16px 24px}
+  .chip{max-width:300px}
+  #logbox{height:560px}
+}
+
+/* ── Very large / wide screens (≥ 1800 px): wider content, bigger type ── */
+@media (min-width:1800px){
+  .tab-panel{padding:36px 60px}
+  .topbar{padding:0 60px}
+  .app-footer{padding:8px 60px}
+  .nav-tab{font-size:14px;padding:0 22px}
+  .logo{font-size:22px}
+  table{font-size:14px}
+  th{font-size:12px;padding:13px 16px}
+  td{padding:14px 16px}
+  .badge{font-size:12px;padding:4px 12px}
+  .btn{font-size:13px;padding:7px 16px}
+  .card-body{padding:28px}
+  .section-hdr h2{font-size:12px}
+  #logbox{height:640px;font-size:13px}
+  .chip{max-width:380px}
+}
+
+/* ── Medium screens (768 – 1079 px): tablet / small laptop ── */
+@media (max-width:1079px){
+  .tab-panel{padding:16px}
+  .topbar{padding:0 14px;height:56px}
+  .logo{margin-right:12px;font-size:17px}
+  .logo sub{display:none}
+  .nav-tab{padding:0 12px;font-size:12px}
+  .topbar-btns .hbtn span{display:none}   /* icon-only on small topbar */
+  .topbar-btns .hbtn{padding:7px 9px}
+  .stat-pill span:not(b){display:none}    /* hide label text in pills */
+  .stat-pill{padding:5px 9px}
+  table{font-size:12px}
+  th{padding:9px 10px}
+  td{padding:10px 10px}
+  .chip{max-width:160px}
+  #logbox{height:380px}
+  .fm-layout{grid-template-columns:180px 1fr}
+}
+
+/* ── Small screens (< 768 px): phones, small windows ── */
+@media (max-width:767px){
+  .tab-panel{padding:10px 8px}
+  .topbar{padding:0 10px;height:52px;gap:0}
+  .logo{font-size:15px;margin-right:8px}
+  .logo sub,.logo-icon{display:none}
+  .nav-tab{padding:0 8px;font-size:11px;gap:4px}
+  .nav-tab i,.nav-tab .ti{font-size:13px}
+  .topbar-right{gap:4px}
+  .stat-pill{display:none}                 /* hide stats on tiny screens */
+  .hc-toggle-wrap{display:none}            /* hide theme toggle < 480 */
+  .topbar-btns{display:none}               /* collapse header buttons */
+  table{font-size:11px}
+  th{padding:7px 8px;font-size:10px}
+  td{padding:8px 8px}
+  .btn{font-size:11px;padding:5px 10px}
+  .badge{font-size:10px;padding:2px 7px}
+  .chip{max-width:110px;font-size:10px}
+  #logbox{height:300px;font-size:11px;padding:10px}
+  .card-body{padding:12px}
+  .card-hdr{padding:10px 14px}
+  .tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .section-hdr{margin-bottom:6px}
+  .app-footer{padding:6px 10px;gap:6px;font-size:10px;flex-wrap:wrap;justify-content:center}
+  .fm-layout{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+  .fm-sidebar{max-height:180px}
+  .btn-group{flex-wrap:wrap}
+}
+
+/* ── Very small (< 480 px): compact phones ── */
+@media (max-width:479px){
+  .nav-tab span:not(.tab-dot){display:none}  /* icon-only tabs */
+  .nav-tab{padding:0 10px}
+  .tab-panel{padding:8px 6px}
+  .topbar{height:48px}
+}
+
+/* ── Tall / narrow screens: ensure log and panels don't overflow ── */
+@media (max-height:600px){
+  #logbox{height:200px}
+  .tab-panel{padding:8px}
+}
 </style>
 </head>
 <body>
@@ -2017,8 +2113,15 @@ select option{background:var(--bg3)}
       <div style="display:flex;flex-wrap:wrap;gap:10px">
         <button class="btn r" onclick="if(confirm('Stop ALL streams?')) api('stop_all',{})" title="Immediately stop every running stream">■ Stop All Streams</button>
         <button class="btn r" onclick="clearPlayedEvents()" title="Delete all events that have already been played from the schedule" style="background:rgba(194,120,120,0.1);border-color:var(--red)">🗑 Clear Played Events</button>
+        <button class="btn r" id="factory-reset-btn" onclick="factoryReset()"
+          title="Stop all streams, wipe the entire config folder, then restart the server fresh"
+          style="background:rgba(194,120,120,0.18);border-color:var(--red);font-weight:700">
+          ⚠ Factory Reset
+        </button>
       </div>
-      <div style="font-size:11px;color:var(--text3);margin-top:10px">These actions affect all streams or event history immediately.</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:10px">
+        <b style="color:var(--red)">Factory Reset</b> stops all streams, deletes all config files (streams, events, mail, settings) and restarts the server. <b>This cannot be undone.</b>
+      </div>
       <div id="danger-status" style="font-size:11px;color:var(--text3);margin-top:6px"></div>
     </div>
   </div>
@@ -5359,6 +5462,55 @@ async function clearPlayedEvents(){
   }catch(e){
     st.textContent='✕ '+e.message;st.style.color='var(--red)';
     toast('Clear failed: '+e.message,'err');
+  }
+}
+
+// ═══════════════════════════════════
+// FACTORY RESET
+// ═══════════════════════════════════
+async function factoryReset(){
+  const st = document.getElementById('danger-status');
+  const btn = document.getElementById('factory-reset-btn');
+  if(!confirm(
+    '⚠  FACTORY RESET\n\n' +
+    'This will:\n' +
+    '  • Stop ALL running streams\n' +
+    '  • Delete ALL config files (streams, events, mail, settings)\n' +
+    '  • Restart the server process\n\n' +
+    'This CANNOT be undone.\n\nType OK below or press Cancel.'
+  )) return;
+  if(prompt('Type  RESET  to confirm factory reset:') !== 'RESET') {
+    st.textContent = 'Reset cancelled.'; st.style.color = 'var(--text3)'; return;
+  }
+  if(btn){ btn.disabled = true; btn.textContent = '⟳ Resetting…'; }
+  if(st){ st.textContent = '⟳ Stopping streams and wiping config…'; st.style.color = 'var(--yellow)'; }
+  try {
+    // fire-and-forget — server will execv before responding in some cases
+    fetch('/api/reset', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({confirm: true}),
+    }).catch(()=>{});
+
+    if(st){ st.textContent = '⟳ Waiting for server to restart…'; st.style.color = 'var(--accent-light)'; }
+    // Poll until the server is back, then reload
+    let attempts = 0;
+    const poll = setInterval(async () => {
+      attempts++;
+      if(attempts > 60){ // 30 s
+        clearInterval(poll);
+        if(st){ st.style.color='var(--red)'; st.textContent='⚠ Server did not come back after 30 s — refresh manually.'; }
+        if(btn){ btn.disabled=false; btn.textContent='⚠ Factory Reset'; }
+        return;
+      }
+      try {
+        const r = await fetch('/api/streams', {cache:'no-store'});
+        if(r.ok){ clearInterval(poll); location.reload(); }
+      } catch(_){}
+    }, 500);
+  } catch(e){
+    if(st){ st.style.color='var(--red)'; st.textContent='✕ ' + (e.message||'Request failed'); }
+    if(btn){ btn.disabled=false; btn.textContent='⚠ Factory Reset'; }
   }
 }
 
