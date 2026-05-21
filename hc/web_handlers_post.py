@@ -13,10 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from hc.constants import (
-    APP_VER, MEDIA_DIR, SUPPORTED_EXTS, UPLOAD_MAX_BYTES,
-    CONFIG_DIR, get_media_roots, set_media_roots,
-)
+from hc.constants import APP_VER, MEDIA_DIR, SUPPORTED_EXTS, UPLOAD_MAX_BYTES
 from hc.models import OneShotEvent, PlaylistItem, StreamConfig
 from hc.utils import _fmt_duration, _safe_path
 
@@ -546,22 +543,6 @@ class _PostHandlersMixin:
         elif action == "restore":
             self._handle_restore(data)
 
-        elif action == "save_media_roots":
-            self._handle_save_media_roots(data)
-
-        elif action == "reset_settings":
-            from hc.web_settings_manager import reset_settings
-            try:
-                defaults = reset_settings()
-                log.info("App settings reset to factory defaults via Web UI")
-                self._json({"ok": True, "msg": "Settings reset to factory defaults.", "values": defaults})
-            except Exception as exc:
-                log.error("POST /api/reset_settings: %s", exc)
-                self._json({"ok": False, "msg": str(exc)})
-
-        elif action == "reset_everything":
-            self._handle_reset_everything(data)
-
         elif action == "reset":
             self._handle_reset(data)
 
@@ -658,14 +639,8 @@ class _PostHandlersMixin:
     # ── Backup ────────────────────────────────────────────────────────────────
 
     def _handle_backup(self, include: Dict[str, Any]) -> None:
-        """
-        Build a plain-JSON .hc backup and send it as a downloadable file.
-
-        *include* flags (all default True):
-          streams, events, mail, resume, app_settings, media_roots
-        """
         import json as _json
-        from hc.web import _SEC_HEADERS  # type: ignore
+        from hc.constants import BASE_DIR, CONFIG_DIR
         try:
             payload: Dict[str, Any] = {
                 "format":  "hydracast_backup",
@@ -673,21 +648,21 @@ class _PostHandlersMixin:
                 "created": datetime.now().isoformat(timespec="seconds"),
             }
             if include.get("streams", True):
-                p = CONFIG_DIR() / "streams.hcf"
+                p = CONFIG_DIR() / "streams.json"
                 try:
                     payload["streams"] = _json.loads(
                         p.read_text(encoding="utf-8")) if p.exists() else []
                 except Exception:
                     payload["streams"] = []
             if include.get("events", True):
-                p = CONFIG_DIR() / "events.hcf"
+                p = CONFIG_DIR() / "events.json"
                 try:
                     payload["events"] = _json.loads(
                         p.read_text(encoding="utf-8")) if p.exists() else []
                 except Exception:
                     payload["events"] = []
             if include.get("mail", True):
-                p = CONFIG_DIR() / "mail_config.hcf"
+                p = BASE_DIR() / "mail_config.json"
                 try:
                     if p.exists():
                         mc = _json.loads(p.read_text(encoding="utf-8"))
@@ -698,27 +673,12 @@ class _PostHandlersMixin:
                 except Exception:
                     payload["mail_config"] = {}
             if include.get("resume", True):
-                p = CONFIG_DIR() / "resume_positions.hcf"
+                p = BASE_DIR() / "resume_positions.json"
                 try:
                     payload["resume_positions"] = _json.loads(
                         p.read_text(encoding="utf-8")) if p.exists() else {}
                 except Exception:
                     payload["resume_positions"] = {}
-            if include.get("app_settings", True):
-                p = CONFIG_DIR() / "app_settings.hcf"
-                try:
-                    payload["app_settings"] = _json.loads(
-                        p.read_text(encoding="utf-8")) if p.exists() else {}
-                except Exception:
-                    payload["app_settings"] = {}
-            if include.get("media_roots", True):
-                p = CONFIG_DIR() / "media_roots.hcf"
-                try:
-                    payload["media_roots"] = _json.loads(
-                        p.read_text(encoding="utf-8")) if p.exists() else []
-                except Exception:
-                    payload["media_roots"] = []
-
             body  = _json.dumps(payload, indent=2, ensure_ascii=False).encode("utf-8")
             ts    = datetime.now().strftime("%Y%m%d_%H%M%S")
             fname = f"hydracast_backup_{ts}.hc"
@@ -727,6 +687,7 @@ class _PostHandlersMixin:
             self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Access-Control-Allow-Origin", "*")
+            from hc.web import _SEC_HEADERS  # type: ignore
             for k, v in _SEC_HEADERS.items():
                 self.send_header(k, v)
             self.end_headers()
@@ -742,123 +703,54 @@ class _PostHandlersMixin:
     # ── Restore ───────────────────────────────────────────────────────────────
 
     def _handle_restore(self, payload: Dict[str, Any]) -> None:
-        """
-        Restore from a .hc backup payload.  Writes config files to disk,
-        reloads the stream manager, and restores app settings and media roots.
-        """
         import json as _json
-        from hc.web import _WEB_MANAGER, _invalidate_lib_cache  # type: ignore
+        from hc.constants import BASE_DIR, CONFIG_DIR
+        from hc.web import _WEB_MANAGER  # type: ignore
         try:
             if payload.get("format") != "hydracast_backup":
                 self._json({"ok": False, "msg": "Not a valid HydraCast backup file"})
                 return
-
-            restored: List[str] = []
-            failed:   List[str] = []
-
-            # ── Streams ──────────────────────────────────────────────────────
+            restored: list = []
             if "streams" in payload:
-                try:
-                    p = CONFIG_DIR() / "streams.hcf"
-                    if not isinstance(payload["streams"], list):
-                        raise ValueError("streams must be a list")
-                    p.write_text(
-                        _json.dumps(payload["streams"], indent=2, ensure_ascii=False),
-                        encoding="utf-8",
-                    )
-                    restored.append("streams")
-                    log.info("restore: streams.hcf written (%d streams)", len(payload["streams"]))
-                except Exception as exc:
-                    failed.append(f"streams: {exc}")
-                    log.error("restore: streams section failed: %s", exc)
-
-            # ── Events ───────────────────────────────────────────────────────
+                p = CONFIG_DIR() / "streams.json"
+                p.write_text(
+                    _json.dumps(payload["streams"], indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                restored.append("streams")
             if "events" in payload:
-                try:
-                    p = CONFIG_DIR() / "events.hcf"
-                    if not isinstance(payload["events"], list):
-                        raise ValueError("events must be a list")
-                    p.write_text(
-                        _json.dumps(payload["events"], indent=2, ensure_ascii=False),
-                        encoding="utf-8",
-                    )
-                    restored.append("events")
-                except Exception as exc:
-                    failed.append(f"events: {exc}")
-                    log.error("restore: events section failed: %s", exc)
-
-            # ── Mail config (password intentionally absent — user must re-enter) ──
+                p = CONFIG_DIR() / "events.json"
+                p.write_text(
+                    _json.dumps(payload["events"], indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                restored.append("events")
             if "mail_config" in payload:
+                p = BASE_DIR() / "mail_config.json"
+                existing: Dict[str, Any] = {}
                 try:
-                    p = CONFIG_DIR() / "mail_config.hcf"
-                    existing: Dict[str, Any] = {}
-                    try:
-                        if p.exists():
-                            existing = _json.loads(p.read_text(encoding="utf-8"))
-                    except Exception:
-                        pass
-                    mc = dict(payload["mail_config"])
-                    if "password" not in mc and "password" in existing:
-                        mc["password"] = existing["password"]
-                    p.write_text(
-                        _json.dumps(mc, indent=4, ensure_ascii=False),
-                        encoding="utf-8",
-                    )
-                    restored.append("mail_config")
-                except Exception as exc:
-                    failed.append(f"mail_config: {exc}")
-                    log.error("restore: mail_config section failed: %s", exc)
-
-            # ── Resume positions ──────────────────────────────────────────────
+                    if p.exists():
+                        existing = _json.loads(p.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+                mc = dict(payload["mail_config"])
+                if "password" not in mc and "password" in existing:
+                    mc["password"] = existing["password"]
+                p.write_text(_json.dumps(mc, indent=4, ensure_ascii=False), encoding="utf-8")
+                restored.append("mail_config")
             if "resume_positions" in payload:
-                try:
-                    p = CONFIG_DIR() / "resume_positions.hcf"
-                    if not isinstance(payload["resume_positions"], dict):
-                        raise ValueError("resume_positions must be an object")
-                    p.write_text(
-                        _json.dumps(payload["resume_positions"], indent=2, ensure_ascii=False),
-                        encoding="utf-8",
-                    )
-                    restored.append("resume_positions")
-                except Exception as exc:
-                    failed.append(f"resume_positions: {exc}")
-                    log.error("restore: resume_positions section failed: %s", exc)
-
-            # ── App settings ──────────────────────────────────────────────────
-            if "app_settings" in payload:
-                try:
-                    from hc.web_settings_manager import save_settings
-                    if not isinstance(payload["app_settings"], dict):
-                        raise ValueError("app_settings must be an object")
-                    save_settings(payload["app_settings"])
-                    restored.append("app_settings")
-                    log.info("restore: app_settings written (%d key(s))", len(payload["app_settings"]))
-                except Exception as exc:
-                    failed.append(f"app_settings: {exc}")
-                    log.error("restore: app_settings section failed: %s", exc)
-
-            # ── Media roots ───────────────────────────────────────────────────
-            if "media_roots" in payload:
-                try:
-                    if not isinstance(payload["media_roots"], list):
-                        raise ValueError("media_roots must be a list")
-                    new_roots = [Path(r) for r in payload["media_roots"] if r]
-                    set_media_roots(new_roots)
-                    _invalidate_lib_cache()
-                    restored.append("media_roots")
-                    log.info("restore: media_roots updated (%d extra root(s))", len(new_roots))
-                except Exception as exc:
-                    failed.append(f"media_roots: {exc}")
-                    log.error("restore: media_roots section failed: %s", exc)
-
-            # ── Reload manager state ──────────────────────────────────────────
+                p = BASE_DIR() / "resume_positions.json"
+                p.write_text(
+                    _json.dumps(payload["resume_positions"], indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                restored.append("resume_positions")
             mgr = _WEB_MANAGER
-            if mgr and "streams" in restored:
+            if mgr and "streams" in payload:
                 try:
                     from hc.json_manager import JSONManager
                     new_configs = JSONManager.load()
                     mgr.reload_from_configs(new_configs)
-                    log.info("restore: manager reloaded with %d stream(s)", len(new_configs))
                 except AttributeError:
                     for st in list(mgr.states):
                         try:
@@ -866,390 +758,123 @@ class _PostHandlersMixin:
                         except Exception:
                             pass
                 except Exception as exc:
-                    log.warning("restore: manager reload failed: %s — streams not restarted", exc)
-
-            if "events" in restored and mgr:
+                    log.warning("restore: manager reload failed: %s", exc)
+            if "events" in payload and mgr:
                 try:
                     from hc.json_manager import JSONManager
                     mgr.events = JSONManager.load_events()
                 except Exception:
                     pass
-
-            log.info(
-                "restore: completed — restored: %s%s",
-                ", ".join(restored),
-                f" | FAILED: {', '.join(failed)}" if failed else "",
-            )
-
-            if not restored and failed:
-                self._json({
-                    "ok":       False,
-                    "msg":      f"Restore failed: {'; '.join(failed)}",
-                    "restored": [],
-                    "failed":   failed,
-                })
-            else:
-                msg = f"Restored: {', '.join(restored)}."
-                if failed:
-                    msg += f" Warnings: {'; '.join(failed)}."
-                else:
-                    msg += " Streams reloaded."
-                self._json({
-                    "ok":       True,
-                    "msg":      msg,
-                    "restored": restored,
-                    "failed":   failed,
-                })
-
+            self._json({
+                "ok":      True,
+                "msg":     f"Restored: {', '.join(restored)}. Streams reloaded.",
+                "restored": restored,
+            })
         except Exception as exc:
             log.error("Restore error: %s", exc)
             self._json({"ok": False, "msg": f"Restore error: {exc}"}, 500)
 
-    # ── Save media roots ──────────────────────────────────────────────────────
-
-    def _handle_save_media_roots(self, data: Dict[str, Any]) -> None:
-        """
-        POST action: save_media_roots
-        Body: { "roots": ["/path/a", "/path/b"] }
-
-        Replaces the extra media roots list.  The default MEDIA_DIR is always
-        kept as the first root.  Invalidates the library cache immediately.
-        """
-        from pathlib import Path as _Path
-        from hc.web import _invalidate_lib_cache  # type: ignore
-        try:
-            raw_roots = data.get("roots", [])
-            if not isinstance(raw_roots, list):
-                self._json({"ok": False, "msg": "'roots' must be a list of path strings"})
-                return
-            new_roots: List[Path] = []
-            errors: List[str] = []
-            for r in raw_roots:
-                p = _Path(str(r).strip())
-                if not p.is_absolute():
-                    errors.append(f"'{p}' is not an absolute path — skipped")
-                    continue
-                if not p.exists():
-                    errors.append(f"'{p}' does not exist — skipped")
-                    continue
-                if not p.is_dir():
-                    errors.append(f"'{p}' is not a directory — skipped")
-                    continue
-                new_roots.append(p)
-            set_media_roots(new_roots)
-            _invalidate_lib_cache()
-            roots_now = get_media_roots()
-            log.info(
-                "media_roots updated: %d root(s) total%s",
-                len(roots_now),
-                f" | warnings: {'; '.join(errors)}" if errors else "",
-            )
-            self._json({
-                "ok":       True,
-                "roots":    [str(r) for r in roots_now],
-                "warnings": errors,
-                "msg":      (
-                    f"Media roots updated: {len(roots_now)} root(s) active."
-                    + (f" Warnings: {'; '.join(errors)}." if errors else "")
-                ),
-            })
-        except Exception as exc:
-            log.error("save_media_roots error: %s", exc)
-            self._json({"ok": False, "msg": f"Error: {exc}"}, 500)
-
-    # ── Factory reset ─────────────────────────────────────────────────────────
-
-    def _handle_reset_everything(self, data: Dict[str, Any]) -> None:
-        """
-        POST action: reset_everything
-        Body (all optional):
-          {
-            "confirm":          true,   // must be true — safety gate
-            "backup_first":     true,   // send a .hc backup before wiping
-            "keep_mail":        false,  // preserve mail_config.hcf
-            "keep_media_roots": false,  // preserve media_roots.hcf
-          }
-
-        Wipes all HydraCast config files, stops all streams, clears in-memory
-        state, and resets application settings to factory defaults.
-        Files wiped: streams.hcf, events.hcf, resume_positions.hcf,
-                     app_settings.hcf (+ mail_config.hcf / media_roots.hcf
-                     unless their keep_* flag is set).
-        """
-        import json as _json
-        from hc.web import _WEB_MANAGER, _SEC_HEADERS, _invalidate_lib_cache  # type: ignore
-        from hc.web_settings_manager import reset_settings
-
-        if not data.get("confirm"):
-            self._json({"ok": False, "msg": "Reset aborted: 'confirm' must be true."}, 400)
-            return
-
-        backup_first     = bool(data.get("backup_first",     True))
-        keep_mail        = bool(data.get("keep_mail",        False))
-        keep_media_roots = bool(data.get("keep_media_roots", False))
-
-        cfg_dir = CONFIG_DIR()
-        mgr     = _WEB_MANAGER
-
-        try:
-            # ── 1. Build pre-reset backup payload ─────────────────────────────
-            backup_payload: Dict[str, Any] = {
-                "format":  "hydracast_backup",
-                "version": APP_VER,
-                "created": datetime.now().isoformat(timespec="seconds"),
-                "note":    "Pre-reset automatic backup",
-            }
-            for fname, key in [
-                ("streams.hcf",          "streams"),
-                ("events.hcf",           "events"),
-                ("mail_config.hcf",      "mail_config"),
-                ("resume_positions.hcf", "resume_positions"),
-                ("app_settings.hcf",     "app_settings"),
-                ("media_roots.hcf",      "media_roots"),
-            ]:
-                p = cfg_dir / fname
-                try:
-                    backup_payload[key] = (
-                        _json.loads(p.read_text(encoding="utf-8")) if p.exists() else
-                        ([] if key in ("streams", "events", "media_roots") else {})
-                    )
-                except Exception:
-                    backup_payload[key] = [] if key in ("streams", "events", "media_roots") else {}
-
-            # ── 2. Stop all streams ───────────────────────────────────────────
-            stopped: List[str] = []
-            if mgr is not None:
-                for st in list(mgr.states):
-                    try:
-                        mgr.stop(st.config.name)
-                        stopped.append(st.config.name)
-                    except Exception as exc:
-                        log.warning("reset_everything: could not stop '%s': %s",
-                                    st.config.name, exc)
-
-            # ── 3. Delete config files ────────────────────────────────────────
-            _FILES_TO_WIPE = [
-                "streams.hcf",
-                "events.hcf",
-                "resume_positions.hcf",
-                "app_settings.hcf",
-            ]
-            if not keep_mail:
-                _FILES_TO_WIPE.append("mail_config.hcf")
-            if not keep_media_roots:
-                _FILES_TO_WIPE.append("media_roots.hcf")
-
-            wiped: List[str] = []
-            wipe_errors: List[str] = []
-            for fname in _FILES_TO_WIPE:
-                p = cfg_dir / fname
-                try:
-                    p.unlink(missing_ok=True)
-                    wiped.append(fname)
-                except Exception as exc:
-                    wipe_errors.append(f"{fname}: {exc}")
-                    log.error("reset_everything: failed to delete '%s': %s", fname, exc)
-
-            # ── 4. Reset in-memory state ──────────────────────────────────────
-            reset_settings()
-
-            if not keep_media_roots:
-                try:
-                    set_media_roots([])
-                    _invalidate_lib_cache()
-                except Exception as exc:
-                    log.warning("reset_everything: could not reset media_roots: %s", exc)
-
-            if mgr is not None:
-                try:
-                    from hc.json_manager import JSONManager
-                    mgr.reload_from_configs([])
-                except AttributeError:
-                    pass
-                except Exception as exc:
-                    log.warning("reset_everything: manager reload failed: %s", exc)
-                try:
-                    mgr.events = []
-                except Exception:
-                    pass
-
-            log.info(
-                "reset_everything: wiped %s | stopped streams: %s%s",
-                ", ".join(wiped),
-                ", ".join(stopped) or "none",
-                f" | errors: {'; '.join(wipe_errors)}" if wipe_errors else "",
-            )
-
-            # ── 5. Return response ────────────────────────────────────────────
-            if backup_first:
-                body  = _json.dumps(backup_payload, indent=2, ensure_ascii=False).encode("utf-8")
-                ts    = datetime.now().strftime("%Y%m%d_%H%M%S")
-                fname = f"hydracast_pre_reset_backup_{ts}.hc"
-                self.send_response(200)
-                self.send_header("Content-Type",        "application/json")
-                self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
-                self.send_header("Content-Length",      str(len(body)))
-                self.send_header("Access-Control-Allow-Origin", "*")
-                summary = (
-                    f"wiped={','.join(wiped)};"
-                    f"stopped={len(stopped)};"
-                    f"errors={len(wipe_errors)}"
-                )
-                self.send_header("X-Reset-Summary", summary)
-                for k, v in _SEC_HEADERS.items():
-                    self.send_header(k, v)
-                self.end_headers()
-                try:
-                    self.wfile.write(body)
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
-                log.info("reset_everything: pre-reset backup sent (%d bytes)", len(body))
-            else:
-                self._json({
-                    "ok":      True,
-                    "msg":     (
-                        f"Factory reset complete. "
-                        f"Wiped: {', '.join(wiped)}. "
-                        f"Stopped streams: {len(stopped)}."
-                        + (f" Errors: {'; '.join(wipe_errors)}." if wipe_errors else "")
-                    ),
-                    "wiped":   wiped,
-                    "stopped": stopped,
-                    "errors":  wipe_errors,
-                    "kept": (
-                        (["mail_config.hcf"] if keep_mail else []) +
-                        (["media_roots.hcf"] if keep_media_roots else [])
-                    ),
-                })
-
-        except Exception as exc:
-            log.error("reset_everything error: %s", exc)
-            self._json({"ok": False, "msg": f"Reset error: {exc}"}, 500)
-
-    # ── Fast parallel reset ───────────────────────────────────────────────────
+    # ── Factory Reset ─────────────────────────────────────────────────────────
 
     def _handle_reset(self, data: Dict[str, Any]) -> None:
         """
-        POST action: reset
-        Body (all optional — omit a key or set true to include that target):
-          {
-            "streams":        true,   // wipe streams.hcf + stop/unload all streams
-            "events":         true,   // wipe events.hcf  + clear in-memory events
-            "mail_config":    true,   // wipe mail_config.hcf
-            "app_settings":   true,   // wipe app_settings.hcf + reset to defaults
-          }
-        Omitting all keys (or sending {}) resets every target.
+        POST /api/reset  –  Hard factory reset.
 
-        All file wipes and in-memory clears run concurrently via a thread pool
-        so the response is returned as fast as possible regardless of I/O.
+        Steps (in order):
+          1. Stop every running stream.
+          2. Delete every file inside config/ (streams.hcf, events.hcf,
+             mail_config.hcf, app_settings.hcf, resume_positions.hcf,
+             media_roots.hcf, holiday caches, …).
+          3. Clear in-memory state (manager streams, events, settings).
+          4. Flush the HTTP response so the browser gets a reply.
+          5. Wait 400 ms then os.execv to restart the whole process fresh.
+
+        Body: { "confirm": true }   ← required safety gate
         """
-        import json as _json
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import os as _os
+        import sys as _sys
+        import threading as _thr
+
         from hc.web import _WEB_MANAGER, _invalidate_lib_cache  # type: ignore
-        from hc.web_settings_manager import reset_settings
 
-        # If no specific targets are given, reset everything
-        _ALL = ("streams", "events", "mail_config", "app_settings")
-        targets = {k for k in _ALL if data.get(k, not bool(data))}
+        if not data.get("confirm"):
+            self._json({"ok": False, "msg": "confirm=true required"}, 400)
+            return
 
+        mgr = _WEB_MANAGER
+        stopped: list = []
+        errors:  list = []
+
+        # ── 1. Stop all streams ───────────────────────────────────────────────
+        if mgr is not None:
+            for st in list(getattr(mgr, "states", [])):
+                try:
+                    mgr.stop(st.config.name)
+                    stopped.append(st.config.name)
+                except Exception as exc:
+                    errors.append(f"stop {st.config.name}: {exc}")
+
+        # ── 2. Wipe every file in config/ ────────────────────────────────────
         cfg_dir = CONFIG_DIR()
-        mgr     = _WEB_MANAGER
-
-        reset_ok:     List[str] = []
-        reset_errors: List[str] = []
-
-        # ── Task definitions (each runs in its own thread) ────────────────────
-
-        def _wipe(fname: str, key: str):
-            p = cfg_dir / fname
-            try:
-                p.unlink(missing_ok=True)
-                return key, None
-            except Exception as exc:
-                return key, str(exc)
-
-        def _reset_streams():
-            errors = []
-            # Stop all running streams first
-            if mgr is not None:
-                for st in list(mgr.states):
+        wiped:   list = []
+        try:
+            for p in cfg_dir.iterdir():
+                if p.is_file():
                     try:
-                        mgr.stop(st.config.name)
+                        p.unlink()
+                        wiped.append(p.name)
                     except Exception as exc:
-                        errors.append(f"stop {st.config.name}: {exc}")
-            # Wipe config file
-            key, err = _wipe("streams.hcf", "streams")
-            if err:
-                errors.append(err)
-            # Reload manager to empty state
-            if mgr is not None:
-                try:
-                    from hc.json_manager import JSONManager
-                    mgr.reload_from_configs([])
-                except Exception as exc:
-                    errors.append(f"reload: {exc}")
-            return "streams", errors or None
+                        errors.append(f"delete {p.name}: {exc}")
+                        log.error("reset: could not delete '%s': %s", p.name, exc)
+        except Exception as exc:
+            errors.append(f"config dir scan: {exc}")
+            log.error("reset: config dir error: %s", exc)
 
-        def _reset_events():
-            errors = []
-            key, err = _wipe("events.hcf", "events")
-            if err:
-                errors.append(err)
-            if mgr is not None:
-                try:
-                    mgr.events = []
-                except Exception as exc:
-                    errors.append(f"clear events: {exc}")
-            return "events", errors or None
+        # ── 3. Clear in-memory state ──────────────────────────────────────────
+        try:
+            from hc.web_settings_manager import reset_settings
+            reset_settings()
+        except Exception as exc:
+            errors.append(f"settings reset: {exc}")
 
-        def _reset_mail():
-            key, err = _wipe("mail_config.hcf", "mail_config")
-            return "mail_config", ([err] if err else None)
+        try:
+            from hc.constants import set_media_roots
+            set_media_roots([])
+            _invalidate_lib_cache()
+        except Exception:
+            pass
 
-        def _reset_app_settings():
-            errors = []
+        if mgr is not None:
             try:
-                reset_settings()
-            except Exception as exc:
-                errors.append(str(exc))
-            return "app_settings", errors or None
-
-        # Map target name → callable
-        _TASKS = {
-            "streams":      _reset_streams,
-            "events":       _reset_events,
-            "mail_config":  _reset_mail,
-            "app_settings": _reset_app_settings,
-        }
-
-        # ── Run all selected tasks concurrently ───────────────────────────────
-        futures = {}
-        with ThreadPoolExecutor(max_workers=len(targets) or 1,
-                                thread_name_prefix="hc-reset") as pool:
-            for t in targets:
-                if t in _TASKS:
-                    futures[pool.submit(_TASKS[t])] = t
-
-        for fut in as_completed(futures):
+                mgr.reload_from_configs([])
+            except Exception:
+                pass
             try:
-                key, errs = fut.result()
-                if errs:
-                    reset_errors.extend(errs)
-                    log.warning("reset[%s]: %s", key, "; ".join(errs))
-                else:
-                    reset_ok.append(key)
-                    log.info("reset[%s]: done", key)
-            except Exception as exc:
-                t = futures[fut]
-                reset_errors.append(f"{t}: {exc}")
-                log.error("reset[%s] raised: %s", t, exc)
+                mgr.events = []
+            except Exception:
+                pass
 
+        log.info("reset: wiped %d file(s): %s | stopped: %s%s",
+                 len(wiped), ", ".join(wiped),
+                 ", ".join(stopped) or "none",
+                 f" | errors: {'; '.join(errors)}" if errors else "")
+
+        # ── 4. Send response now, before execv kills the process ──────────────
         self._json({
-            "ok":     not reset_errors or bool(reset_ok),
-            "reset":  reset_ok,
-            "errors": reset_errors,
-            "msg": (
-                f"Reset complete: {', '.join(reset_ok)}."
-                + (f" Errors: {'; '.join(reset_errors)}." if reset_errors else "")
-            ),
+            "ok":      True,
+            "msg":     "Reset complete — restarting…",
+            "wiped":   wiped,
+            "stopped": stopped,
+            "errors":  errors,
         })
+
+        # ── 5. Restart the whole process after a short flush delay ────────────
+        def _restart():
+            import time as _t
+            _t.sleep(0.5)
+            try:
+                _os.execv(_sys.executable, [_sys.executable] + _sys.argv)
+            except Exception as exc:
+                log.error("reset: execv failed: %s", exc)
+
+        _thr.Thread(target=_restart, daemon=True, name="hc-reset-restart").start()
