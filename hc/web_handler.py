@@ -599,10 +599,25 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                 # Next pending (not yet played) event for this stream.
                 # Only populated when no oneshot is active; during oneshot,
                 # current_file already shows the event file being played.
-                "active_event":   next(
-                    (ev.file_path.name for ev in mgr.events
-                     if ev.stream_name == cfg.name and not ev.played),
-                    None
+                # Falls back to the most recently played event's filename when
+                # current_file is briefly None during the post-event resume
+                # transition (avoids the file-name disappearing on the stream card).
+                "active_event":   (
+                    next(
+                        (ev.file_path.name for ev in mgr.events
+                         if ev.stream_name == cfg.name and not ev.played),
+                        # Fallback: show last-played event name while current_file
+                        # is still None (worker resuming playlist after oneshot).
+                        next(
+                            (ev.file_path.name for ev in reversed(mgr.events)
+                             if ev.stream_name == cfg.name and ev.played),
+                            None
+                        ) if not (
+                            st.current_file()
+                            if callable(getattr(st, "current_file", None))
+                            else getattr(st, "current_file", None)
+                        ) else None,
+                    )
                 ) if not getattr(st, "oneshot_active", False) else None,
                 # next 2 upcoming playlist items
                 "next_in_queue":  _get_next_in_queue(st, cfg, n=2),
@@ -904,14 +919,41 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
             self._json({"error": "not found"}, 404)
             return
         cfg = st.config
+        oneshot_active = bool(getattr(st, "oneshot_active", False))
+        _cf_raw = (
+            st.current_file()
+            if callable(getattr(st, "current_file", None))
+            else getattr(st, "current_file", None)
+        )
+        current_file = Path(_cf_raw).name if _cf_raw else None
+        # Determine active_event the same way _get_streams does:
+        # show next pending event name; if none and current_file is also None
+        # (resume transition just ended), fall back to last-played event name.
+        if oneshot_active:
+            active_event = None
+        else:
+            active_event = next(
+                (ev.file_path.name for ev in mgr.events
+                 if ev.stream_name == cfg.name and not ev.played),
+                (
+                    next(
+                        (ev.file_path.name for ev in reversed(mgr.events)
+                         if ev.stream_name == cfg.name and ev.played),
+                        None,
+                    ) if not _cf_raw else None
+                ),
+            )
         self._json({
-            "name":        cfg.name,
-            "status":      st.status.label,
-            "rtsp_url":    cfg.rtsp_url_external,
-            "hls_url":     cfg.hls_url if cfg.hls_enabled else "",
-            "current_pos": st.current_pos,
-            "duration":    st.duration,
-            "progress":    st.progress,
+            "name":           cfg.name,
+            "status":         st.status.label,
+            "rtsp_url":       cfg.rtsp_url_external,
+            "hls_url":        cfg.hls_url if cfg.hls_enabled else "",
+            "current_pos":    st.current_pos,
+            "duration":       st.duration,
+            "progress":       st.progress,
+            "oneshot_active": oneshot_active,
+            "current_file":   current_file,
+            "active_event":   active_event,
         })
 
     def _get_mail_config(self) -> None:
