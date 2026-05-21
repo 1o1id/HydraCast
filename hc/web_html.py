@@ -451,6 +451,7 @@ a:hover{color:var(--accent)}
   font-family:var(--font-display);font-weight:800;font-size:20px;
   color:var(--text);letter-spacing:-0.3px;
   margin-right:28px;white-space:nowrap;
+  flex-shrink:0;
 }
 .logo-icon{
   width:36px;height:36px;
@@ -485,6 +486,7 @@ a:hover{color:var(--accent)}
 
 .topbar-right{
   margin-left:auto;display:flex;align-items:center;gap:8px;
+  flex-shrink:0;
 }
 .stat-pill{
   display:flex;align-items:center;gap:7px;
@@ -561,30 +563,40 @@ a:hover{color:var(--accent)}
 }
 
 /* ─────────── RESPONSIVE ─────────── */
-@media(max-width:900px){
-  .topbar{padding:0 14px;gap:0}
-  .logo{margin-right:10px;font-size:17px}
+/* Keep topbar at fixed 60 px — nav tabs scroll horizontally on narrow windows */
+.nav-tabs{
+  display:flex;gap:2px;align-items:stretch;height:100%;
+  flex:1;min-width:0;
+  overflow-x:auto;overflow-y:hidden;
+  scrollbar-width:none;          /* Firefox */
+  -ms-overflow-style:none;       /* IE/Edge */
+}
+.nav-tabs::-webkit-scrollbar{display:none}   /* Chrome/Safari */
+
+@media(max-width:960px){
+  .topbar{padding:0 14px}
+  .logo{margin-right:14px;font-size:17px}
   .logo sub{display:none}
-  .nav-tab{padding:0 10px;font-size:12px;gap:5px}
+  .nav-tab{padding:0 12px;font-size:12px}
   .stat-pill{display:none}
   .tab-panel{padding:16px}
 }
-@media(max-width:640px){
-  .topbar{height:auto;min-height:52px;flex-wrap:wrap;padding:6px 10px;gap:4px}
-  .logo{margin-right:auto;font-size:15px}
-  .logo-icon{width:28px;height:28px;font-size:12px}
-  .nav-tabs{height:auto;flex-wrap:wrap;gap:0;order:10;width:100%;border-top:1px solid var(--border);margin-top:4px}
-  .nav-tab{padding:6px 9px;font-size:11px;border-bottom:none;border-right:2px solid transparent}
-  .nav-tab.active{border-right-color:var(--accent);border-bottom:none;background:rgba(184,115,51,0.06)}
-  .topbar-right{gap:5px}
-  .topbar::after{display:none}
+@media(max-width:600px){
+  .topbar{padding:0 10px}
+  .logo{margin-right:8px}
+  .logo span[id="topbar-app-name"]{display:none}  /* hide text name, keep icon */
+  .nav-tab{padding:0 9px;font-size:11px;gap:4px}
+  .nav-tab .tab-dot{display:none}
+  .hc-toggle-wrap{display:none}
+  .topbar-btns .hbtn span{display:none}
+  .topbar-btns .hbtn{padding:5px 8px}
   .tab-panel{padding:10px}
   .tab-panel.active{gap:12px}
-  .card-body{padding:14px}
+  .card-body{padding:12px}
   .card-hdr{padding:10px 14px}
-  .hbtn{padding:5px 10px;font-size:11px}
 }
-/* Responsive grid helper — used by settings sections */
+
+/* Responsive 2-column grid — collapses to 1 col below 700 px */
 .rg-2{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}
 @media(max-width:700px){.rg-2{grid-template-columns:1fr}}
 
