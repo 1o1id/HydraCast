@@ -320,6 +320,78 @@ def _get_next_in_queue(st, cfg, n=2):
     return result
 
 
+
+def _active_event_name(st, cfg, mgr) -> Optional[str]:
+    """
+    Return the filename the UI should display as the 'active event' label.
+
+    Logic (evaluated in order):
+
+    1.  If oneshot IS active AND current_file is already populated
+        -> return None (the file name is already visible via current_file; no
+           need to duplicate it in active_event).
+
+    2.  If oneshot IS active AND current_file is None
+        -> the worker does not expose the oneshot path through current_file().
+           Fall back: look for the in-flight event for this stream.
+           - First try events where ev.played is False (event fired but worker
+             has not yet marked it done).
+           - If none found (worker marks played=True on trigger, not on finish),
+             take the most recently fired event (highest play_at, played=True).
+
+    3.  No oneshot active
+        -> show the next pending (unplayed) event name, or - if current_file is
+           also None during a brief post-event resume transition - show the
+           most recently played event name as a transient placeholder.
+    """
+    oneshot_active = bool(getattr(st, "oneshot_active", False))
+    cf_raw = (
+        st.current_file()
+        if callable(getattr(st, "current_file", None))
+        else getattr(st, "current_file", None)
+    )
+    stream_events = [ev for ev in mgr.events if ev.stream_name == cfg.name]
+
+    if oneshot_active:
+        if cf_raw:
+            # current_file is already shown -- active_event not needed
+            return None
+        # current_file is None: worker doesn't expose the oneshot path.
+        # Find the event that is currently in-flight.
+        # Try unplayed first (played flag set only when event finishes).
+        in_flight = next(
+            (ev.file_path.name for ev in stream_events if not ev.played),
+            None,
+        )
+        if in_flight:
+            return in_flight
+        # Fallback: played flag was set on trigger -- take most recently fired.
+        played_events = sorted(
+            (ev for ev in stream_events if ev.played),
+            key=lambda e: e.play_at,
+            reverse=True,
+        )
+        return played_events[0].file_path.name if played_events else None
+
+    # No oneshot active -- show next pending event.
+    pending = next(
+        (ev.file_path.name for ev in stream_events if not ev.played),
+        None,
+    )
+    if pending:
+        return pending
+    # If current_file is also None (brief resume transition), use the last
+    # played event as a transient placeholder so the card isn't blank.
+    if not cf_raw:
+        played_events = sorted(
+            (ev for ev in stream_events if ev.played),
+            key=lambda e: e.play_at,
+            reverse=True,
+        )
+        return played_events[0].file_path.name if played_events else None
+    return None
+
+
 # =============================================================================
 # REQUEST HANDLER
 # =============================================================================
@@ -596,29 +668,19 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                         else getattr(st, "current_file", None)
                     )) else None
                 ),
-                # Next pending (not yet played) event for this stream.
-                # Only populated when no oneshot is active; during oneshot,
-                # current_file already shows the event file being played.
-                # Falls back to the most recently played event's filename when
-                # current_file is briefly None during the post-event resume
-                # transition (avoids the file-name disappearing on the stream card).
-                "active_event":   (
-                    next(
-                        (ev.file_path.name for ev in mgr.events
-                         if ev.stream_name == cfg.name and not ev.played),
-                        # Fallback: show last-played event name while current_file
-                        # is still None (worker resuming playlist after oneshot).
-                        next(
-                            (ev.file_path.name for ev in reversed(mgr.events)
-                             if ev.stream_name == cfg.name and ev.played),
-                            None
-                        ) if not (
-                            st.current_file()
-                            if callable(getattr(st, "current_file", None))
-                            else getattr(st, "current_file", None)
-                        ) else None,
-                    )
-                ) if not getattr(st, "oneshot_active", False) else None,
+                # active_event: the filename to display when current_file is unavailable.
+                #
+                # Three cases:
+                #  A) oneshot IS active, current_file is populated → active_event=None
+                #     (current_file already shows what's playing, no need to duplicate)
+                #  B) oneshot IS active, current_file is None → worker doesn't expose
+                #     the oneshot path via current_file(); use active_event as the
+                #     fallback so the UI always has a name to show.
+                #     Look for the in-flight event (unplayed first, then most recently
+                #     played, depending on when the worker sets ev.played).
+                #  C) no oneshot active → show next pending event, or last-played name
+                #     if current_file is also None (brief resume transition).
+                "active_event":   _active_event_name(st, cfg, mgr),
                 # next 2 upcoming playlist items
                 "next_in_queue":  _get_next_in_queue(st, cfg, n=2),
                 # Compliance alert (v2)
@@ -925,24 +987,6 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
             if callable(getattr(st, "current_file", None))
             else getattr(st, "current_file", None)
         )
-        current_file = Path(_cf_raw).name if _cf_raw else None
-        # Determine active_event the same way _get_streams does:
-        # show next pending event name; if none and current_file is also None
-        # (resume transition just ended), fall back to last-played event name.
-        if oneshot_active:
-            active_event = None
-        else:
-            active_event = next(
-                (ev.file_path.name for ev in mgr.events
-                 if ev.stream_name == cfg.name and not ev.played),
-                (
-                    next(
-                        (ev.file_path.name for ev in reversed(mgr.events)
-                         if ev.stream_name == cfg.name and ev.played),
-                        None,
-                    ) if not _cf_raw else None
-                ),
-            )
         self._json({
             "name":           cfg.name,
             "status":         st.status.label,
@@ -952,8 +996,9 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
             "duration":       st.duration,
             "progress":       st.progress,
             "oneshot_active": oneshot_active,
-            "current_file":   current_file,
-            "active_event":   active_event,
+            "current_file":   Path(_cf_raw).name if _cf_raw else None,
+            # Uses the same helper as _get_streams so both endpoints are consistent.
+            "active_event":   _active_event_name(st, cfg, mgr),
         })
 
     def _get_mail_config(self) -> None:
