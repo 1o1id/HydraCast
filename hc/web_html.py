@@ -1483,7 +1483,6 @@ select option{background:var(--bg3)}
   <div class="settings-grid">
     <!-- Accent Color -->
     <div class="setting-card">
-    <div class="setting-card">
       <h3>Accent Color</h3>
       <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.6">
         Customise the interface highlight colour used for buttons, borders, and focus rings.
