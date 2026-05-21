@@ -7,7 +7,7 @@ Requires an Azure App Registration with:
   • API permission: Microsoft Graph → Application → Mail.Send
   • A mailbox address that the app is allowed to send from
 
-mail_config.json schema
+mail_config.hcf schema
 ────────────────────────
 {
     "enabled":       true,
@@ -71,10 +71,12 @@ _CONFIG_TEMPLATE = {
 
 def _config_dir() -> Path:
     from hc.constants import CONFIG_DIR
-    return CONFIG_DIR()
+    d = CONFIG_DIR()
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 def _config_path() -> Path:
-    return _config_dir() / "mail_config.json"
+    return _config_dir() / "mail_config.hcf"
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -83,7 +85,7 @@ def _config_path() -> Path:
 
 def _load_config() -> Optional[dict]:
     """
-    Load and validate mail_config.json.
+    Load and validate mail_config.hcf.
     Returns None if disabled or invalid (already logged).
     Creates a template on first run.
     """
@@ -96,7 +98,7 @@ def _load_config() -> Optional[dict]:
                 encoding="utf-8",
             )
             log.info(
-                "mailer: created mail_config.json template at %s — "
+                "mailer: created mail_config.hcf template at %s — "
                 "edit it and set \"enabled\": true to activate alerts.",
                 path,
             )
@@ -107,7 +109,7 @@ def _load_config() -> Optional[dict]:
     try:
         cfg = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
-        log.warning("mailer: failed to read mail_config.json: %s", exc)
+        log.warning("mailer: failed to read mail_config.hcf: %s", exc)
         return None
 
     if not cfg.get("enabled", False):
@@ -119,7 +121,7 @@ def _load_config() -> Optional[dict]:
 
     for key in ("tenant_id", "client_id", "client_secret", "from_addr"):
         if not cfg.get(key, "").strip():
-            log.warning("mailer: mail_config.json missing required field '%s'", key)
+            log.warning("mailer: mail_config.hcf missing required field '%s'", key)
             return None
 
     return cfg
@@ -386,7 +388,7 @@ def test_alert(to_addr: Optional[str] = None) -> tuple[bool, str]:
     """
     cfg = _load_config()
     if cfg is None:
-        msg = "Mail alerts are disabled or mail_config.json is missing/invalid."
+        msg = "Mail alerts are disabled or mail_config.hcf is missing/invalid."
         log.warning("mailer: test_alert — %s", msg)
         return False, msg
 
