@@ -290,13 +290,52 @@ def save_settings(updates: Dict[str, Any]) -> Dict[str, Any]:
 
 def reset_settings() -> Dict[str, Any]:
     """
-    Delete the persisted settings file and return factory defaults.
-    Used by the factory-reset flow.
+    Delete the persisted settings file AND any holiday store files, then
+    return factory defaults.  Used by the factory-reset flow.
+
+    Holiday data (custom_holidays.hcf and the library-cache directory) may
+    live outside CONFIG_DIR, so we clear them here as a belt-and-braces
+    measure in addition to the explicit wipe in _handle_reset.
     """
+    import shutil as _shutil
+
+    # ── App settings file ────────────────────────────────────────────────────
     p = _settings_path()
     try:
         p.unlink(missing_ok=True)
         log.info("web_settings_manager: settings reset to factory defaults")
     except Exception as exc:
         log.warning("web_settings_manager: could not delete settings file — %s", exc)
+
+    # ── Holiday store — custom holidays + library cache ──────────────────────
+    # Prefer the holiday store's own path helpers; fall back to filename
+    # convention inside CONFIG_DIR if those helpers don't exist.
+    try:
+        from hc.web_holiday_store import _custom_path, _cache_dir  # type: ignore[attr-defined]
+        try:
+            _custom_path().unlink(missing_ok=True)
+        except Exception as exc:
+            log.warning("web_settings_manager: could not delete custom holidays — %s", exc)
+        try:
+            _cd = _cache_dir()
+            if _cd.exists():
+                _shutil.rmtree(_cd, ignore_errors=True)
+        except Exception as exc:
+            log.warning("web_settings_manager: could not clear holiday cache dir — %s", exc)
+    except Exception:
+        # Fallback: best-effort delete well-known file names inside CONFIG_DIR
+        cfg = CONFIG_DIR()
+        for _fname in ("custom_holidays.hcf", "holidays_cache.hcf"):
+            try:
+                (cfg / _fname).unlink(missing_ok=True)
+            except Exception:
+                pass
+        for _dname in ("holidays", "holiday_cache"):
+            _d = cfg / _dname
+            try:
+                if _d.exists():
+                    _shutil.rmtree(_d, ignore_errors=True)
+            except Exception:
+                pass
+
     return dict(_DEFAULTS)
