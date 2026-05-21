@@ -562,6 +562,9 @@ class _PostHandlersMixin:
         elif action == "reset_everything":
             self._handle_reset_everything(data)
 
+        elif action == "reset":
+            self._handle_reset(data)
+
         else:
             self._json({"ok": False, "msg": f"Unknown action: {action}"}, 404)
 
@@ -1122,3 +1125,131 @@ class _PostHandlersMixin:
         except Exception as exc:
             log.error("reset_everything error: %s", exc)
             self._json({"ok": False, "msg": f"Reset error: {exc}"}, 500)
+
+    # ── Fast parallel reset ───────────────────────────────────────────────────
+
+    def _handle_reset(self, data: Dict[str, Any]) -> None:
+        """
+        POST action: reset
+        Body (all optional — omit a key or set true to include that target):
+          {
+            "streams":        true,   // wipe streams.hcf + stop/unload all streams
+            "events":         true,   // wipe events.hcf  + clear in-memory events
+            "mail_config":    true,   // wipe mail_config.hcf
+            "app_settings":   true,   // wipe app_settings.hcf + reset to defaults
+          }
+        Omitting all keys (or sending {}) resets every target.
+
+        All file wipes and in-memory clears run concurrently via a thread pool
+        so the response is returned as fast as possible regardless of I/O.
+        """
+        import json as _json
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from hc.web import _WEB_MANAGER, _invalidate_lib_cache  # type: ignore
+        from hc.web_settings_manager import reset_settings
+
+        # If no specific targets are given, reset everything
+        _ALL = ("streams", "events", "mail_config", "app_settings")
+        targets = {k for k in _ALL if data.get(k, not bool(data))}
+
+        cfg_dir = CONFIG_DIR()
+        mgr     = _WEB_MANAGER
+
+        reset_ok:     List[str] = []
+        reset_errors: List[str] = []
+
+        # ── Task definitions (each runs in its own thread) ────────────────────
+
+        def _wipe(fname: str, key: str):
+            p = cfg_dir / fname
+            try:
+                p.unlink(missing_ok=True)
+                return key, None
+            except Exception as exc:
+                return key, str(exc)
+
+        def _reset_streams():
+            errors = []
+            # Stop all running streams first
+            if mgr is not None:
+                for st in list(mgr.states):
+                    try:
+                        mgr.stop(st.config.name)
+                    except Exception as exc:
+                        errors.append(f"stop {st.config.name}: {exc}")
+            # Wipe config file
+            key, err = _wipe("streams.hcf", "streams")
+            if err:
+                errors.append(err)
+            # Reload manager to empty state
+            if mgr is not None:
+                try:
+                    from hc.json_manager import JSONManager
+                    mgr.reload_from_configs([])
+                except Exception as exc:
+                    errors.append(f"reload: {exc}")
+            return "streams", errors or None
+
+        def _reset_events():
+            errors = []
+            key, err = _wipe("events.hcf", "events")
+            if err:
+                errors.append(err)
+            if mgr is not None:
+                try:
+                    mgr.events = []
+                except Exception as exc:
+                    errors.append(f"clear events: {exc}")
+            return "events", errors or None
+
+        def _reset_mail():
+            key, err = _wipe("mail_config.hcf", "mail_config")
+            return "mail_config", ([err] if err else None)
+
+        def _reset_app_settings():
+            errors = []
+            try:
+                reset_settings()
+            except Exception as exc:
+                errors.append(str(exc))
+            return "app_settings", errors or None
+
+        # Map target name → callable
+        _TASKS = {
+            "streams":      _reset_streams,
+            "events":       _reset_events,
+            "mail_config":  _reset_mail,
+            "app_settings": _reset_app_settings,
+        }
+
+        # ── Run all selected tasks concurrently ───────────────────────────────
+        futures = {}
+        with ThreadPoolExecutor(max_workers=len(targets) or 1,
+                                thread_name_prefix="hc-reset") as pool:
+            for t in targets:
+                if t in _TASKS:
+                    futures[pool.submit(_TASKS[t])] = t
+
+        for fut in as_completed(futures):
+            try:
+                key, errs = fut.result()
+                if errs:
+                    reset_errors.extend(errs)
+                    log.warning("reset[%s]: %s", key, "; ".join(errs))
+                else:
+                    reset_ok.append(key)
+                    log.info("reset[%s]: done", key)
+            except Exception as exc:
+                t = futures[fut]
+                reset_errors.append(f"{t}: {exc}")
+                log.error("reset[%s] raised: %s", t, exc)
+
+        self._json({
+            "ok":     not reset_errors or bool(reset_ok),
+            "reset":  reset_ok,
+            "errors": reset_errors,
+            "msg": (
+                f"Reset complete: {', '.join(reset_ok)}."
+                + (f" Errors: {'; '.join(reset_errors)}." if reset_errors else "")
+            ),
+        })
