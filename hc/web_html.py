@@ -560,6 +560,34 @@ a:hover{color:var(--accent)}
   animation:fadeSlideIn 0.28s ease both;
 }
 
+/* ─────────── RESPONSIVE ─────────── */
+@media(max-width:900px){
+  .topbar{padding:0 14px;gap:0}
+  .logo{margin-right:10px;font-size:17px}
+  .logo sub{display:none}
+  .nav-tab{padding:0 10px;font-size:12px;gap:5px}
+  .stat-pill{display:none}
+  .tab-panel{padding:16px}
+}
+@media(max-width:640px){
+  .topbar{height:auto;min-height:52px;flex-wrap:wrap;padding:6px 10px;gap:4px}
+  .logo{margin-right:auto;font-size:15px}
+  .logo-icon{width:28px;height:28px;font-size:12px}
+  .nav-tabs{height:auto;flex-wrap:wrap;gap:0;order:10;width:100%;border-top:1px solid var(--border);margin-top:4px}
+  .nav-tab{padding:6px 9px;font-size:11px;border-bottom:none;border-right:2px solid transparent}
+  .nav-tab.active{border-right-color:var(--accent);border-bottom:none;background:rgba(184,115,51,0.06)}
+  .topbar-right{gap:5px}
+  .topbar::after{display:none}
+  .tab-panel{padding:10px}
+  .tab-panel.active{gap:12px}
+  .card-body{padding:14px}
+  .card-hdr{padding:10px 14px}
+  .hbtn{padding:5px 10px;font-size:11px}
+}
+/* Responsive grid helper — used by settings sections */
+.rg-2{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}
+@media(max-width:700px){.rg-2{grid-template-columns:1fr}}
+
 /* ─────────── SECTION HEADER ─────────── */
 .section-hdr{
   display:flex;align-items:center;gap:12px;margin-bottom:4px;
@@ -2012,12 +2040,12 @@ select option{background:var(--bg3)}
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <input id="mr-new-path" type="text"
           placeholder="/absolute/path/to/extra/media"
-          style="flex:1;min-width:220px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px 11px;border-radius:var(--radius);font-size:12px;font-family:var(--font-mono);outline:none;transition:border-color 0.2s"
+          style="flex:1;min-width:160px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px 11px;border-radius:var(--radius);font-size:12px;font-family:var(--font-mono);outline:none;transition:border-color 0.2s"
           onfocus="this.style.borderColor='var(--accent)'"
           onblur="this.style.borderColor='var(--border)'"
           onkeydown="if(event.key==='Enter')addMediaRoot()"
           title="Absolute server-side path to add as a media root">
-        <button class="btn g" onclick="addMediaRoot()" title="Add this directory as an extra media root">+ Add Root</button>
+        <button class="btn g" onclick="addMediaRoot()" style="white-space:nowrap;flex-shrink:0" title="Add this directory as an extra media root">+ Add Root</button>
       </div>
       <div id="mr-status" style="font-size:11px;color:var(--text3);margin-top:8px"></div>
     </div>
@@ -2027,7 +2055,7 @@ select option{background:var(--bg3)}
   <div style="margin-top:4px">
     <div class="section-hdr"><h2>Backup &amp; Restore</h2><span class="sep"></span></div>
     <div class="card card-body" style="padding:16px">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+      <div class="rg-2">
 
         <!-- Backup -->
         <div>
@@ -2096,17 +2124,17 @@ select option{background:var(--bg3)}
   <div style="margin-top:4px">
     <div class="section-hdr"><h2>⚡ Service Control</h2><span class="sep"></span></div>
     <div class="card card-body" style="padding:16px">
-      <div style="display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap">
-        <div style="flex:1;min-width:220px">
-          <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px">↺ Restart Everything</div>
-          <div style="font-size:12px;color:var(--text3);margin-bottom:12px;line-height:1.5">Stops all streams, then relaunches the entire application process (<code style="font-size:11px">os.execv</code>). The page will reconnect automatically in ~5 s.</div>
-          <button class="btn r" style="font-weight:600" onclick="svcRestartAll()"
+      <div style="display:flex;flex-wrap:wrap;align-items:stretch;gap:12px">
+        <div style="flex:1;min-width:200px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:12px">
+          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:4px">↺ Restart Everything</div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:8px;line-height:1.5">Stops all streams, then relaunches the entire application process (<code style="font-size:10px">os.execv</code>). Page reconnects automatically in ~5 s.</div>
+          <button class="btn r" style="font-weight:600;width:100%" onclick="svcRestartAll()"
                   title="Stop all streams then restart the web server process (os.execv)">&#x26A1; Restart All Services</button>
         </div>
-        <div style="flex:1;min-width:220px">
-          <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px">↺ Streams only</div>
-          <div style="font-size:12px;color:var(--text3);margin-bottom:12px;line-height:1.5">Restarts every stream without touching the web UI process. Faster — no page reload needed.</div>
-          <button class="btn b" onclick="if(confirm('Restart ALL streams?')) api('restart_all',{})"
+        <div style="flex:1;min-width:200px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:12px">
+          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:4px">↺ Streams Only</div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:8px;line-height:1.5">Restarts every stream without touching the web UI process. Faster — no page reload needed.</div>
+          <button class="btn b" style="width:100%" onclick="if(confirm('Restart ALL streams?')) api('restart_all',{})"
                   title="Stop and restart every stream">↺ Restart Streams</button>
         </div>
       </div>
@@ -2118,24 +2146,38 @@ select option{background:var(--bg3)}
   <div style="margin-top:4px">
     <div class="section-hdr"><h2 style="color:var(--red)">Danger Zone</h2><span class="sep"></span></div>
     <div class="card card-body" style="border-color:rgba(194,120,120,0.3);padding:16px;background:rgba(194,120,120,0.03)">
-      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
-        <button class="btn r" onclick="if(confirm('Stop ALL streams?')) api('stop_all',{})"
-          title="Immediately stop every running stream">■ Stop All</button>
-        <button class="btn r" onclick="clearPlayedEvents()"
-          title="Delete all played events from schedule history"
-          style="background:rgba(194,120,120,0.1);border-color:var(--red)">🗑 Clear Events</button>
-        <button class="btn r" id="factory-reset-btn" onclick="factoryReset()"
-          title="Stop all streams · delete all config files · restart server"
-          style="background:rgba(194,120,120,0.22);border-color:var(--red);font-weight:700;margin-left:auto">
-          ⚠ Factory Reset
-        </button>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start">
+        <!-- Stop All -->
+        <div style="flex:1;min-width:180px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:12px">
+          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:4px">■ Stop All Streams</div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:8px;line-height:1.5">Immediately stop every running stream process.</div>
+          <button class="btn r" onclick="if(confirm('Force-stop ALL streams?')) api('stop_all',{})"
+            title="Immediately stop every running stream" style="width:100%">■ Stop All</button>
+        </div>
+        <!-- Clear Events -->
+        <div style="flex:1;min-width:180px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:12px">
+          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:4px">🗑 Clear Played Events</div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:8px;line-height:1.5">Delete all played events from schedule history permanently.</div>
+          <button class="btn r" onclick="clearPlayedEvents()"
+            title="Delete all played events from schedule history"
+            style="background:rgba(194,120,120,0.1);border-color:var(--red);width:100%">🗑 Clear Events</button>
+        </div>
+        <!-- Factory Reset -->
+        <div style="flex:1;min-width:220px;background:rgba(194,120,120,0.06);border:1.5px solid rgba(194,120,120,0.45);border-radius:var(--radius);padding:12px">
+          <div style="font-size:12px;font-weight:700;color:var(--red);margin-bottom:4px;display:flex;align-items:center;gap:6px">
+            <i class="ti ti-alert-triangle" style="font-size:14px"></i>Factory Reset
+          </div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:8px;line-height:1.5">
+            Force-stops <em>all</em> streams → deletes <em>every</em> file &amp; folder in <code style="font-size:10px">config/</code> → restarts the server. <b style="color:var(--red)">Cannot be undone.</b>
+          </div>
+          <button class="btn r" id="factory-reset-btn" onclick="factoryReset()"
+            title="Force-stop all streams · wipe entire config directory · restart server"
+            style="background:rgba(194,120,120,0.22);border-color:var(--red);font-weight:700;width:100%">
+            <i class="ti ti-alert-triangle" style="margin-right:4px"></i>⚠ Factory Reset
+          </button>
+        </div>
       </div>
-      <div style="font-size:11px;color:var(--text3);margin-top:10px;line-height:1.5">
-        <b style="color:var(--red)">Factory Reset</b> stops every stream, deletes <em>all</em> config files
-        (streams · events · mail · settings · resume positions) and restarts the server.
-        <b>Cannot be undone.</b>
-      </div>
-      <div id="danger-status" style="font-size:11px;margin-top:6px"></div>
+      <div id="danger-status" style="font-size:11px;margin-top:10px"></div>
     </div>
   </div>
 </div>
@@ -5488,11 +5530,13 @@ async function factoryReset(){
   const orig = btn ? btn.innerHTML : '';
 
   if(!confirm(
-    '⚠  FACTORY RESET\n\n' +
-    'This will permanently:\n' +
-    '  • Stop ALL running streams\n' +
-    '  • Delete ALL config files\n    (streams, events, mail, settings, resume positions)\n' +
-    '  • Restart the HydraCast server\n\n' +
+    '⚠  FACTORY RESET — POINT OF NO RETURN\n\n' +
+    'This will permanently and immediately:\n' +
+    '  1. Force-kill ALL running stream processes\n' +
+    '  2. Delete EVERY file and folder inside config/\n' +
+    '     (streams · events · mail · settings · backups · resume positions)\n' +
+    '  3. Restart the entire HydraCast server process\n\n' +
+    'The page will reconnect once the server is back up.\n\n' +
     'Type  RESET  in the next prompt to confirm.'
   )) return;
 
@@ -5501,17 +5545,38 @@ async function factoryReset(){
     return;
   }
 
-  if(btn){btn.disabled=true;btn.innerHTML='⟳ Resetting…';}
-  if(st){st.textContent='⟳ Stopping streams and wiping config…';st.style.color='var(--yellow)';}
+  if(btn){btn.disabled=true;btn.innerHTML='<i class="ti ti-loader-2" style="animation:spin 0.8s linear infinite;margin-right:5px"></i>Resetting…';}
+  if(st){
+    st.style.color='var(--yellow)';
+    st.innerHTML='<i class="ti ti-loader-2" style="animation:spin 0.8s linear infinite;margin-right:4px"></i>Step 1/3: Force-stopping all streams…';
+  }
 
   // Fire the request — server will execv so it may not reply
   fetch('/api/reset',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({confirm:true}),
-  }).catch(()=>{});
+  }).then(async r=>{
+    try{
+      const j=await r.json();
+      const stopped=(j.stopped||[]).length;
+      const wiped=(j.wiped||[]).length;
+      if(st) st.innerHTML=`<i class="ti ti-loader-2" style="animation:spin 0.8s linear infinite;margin-right:4px"></i>`
+        +`Stopped ${stopped} stream(s), wiped ${wiped} file(s) — waiting for server restart…`;
+    }catch(_){}
+  }).catch(()=>{
+    // connection drop is expected as server restarts
+  });
 
-  if(st){st.textContent='⟳ Waiting for server to restart…';st.style.color='var(--accent-light)';}
+  if(st){
+    setTimeout(()=>{
+      if(st) st.innerHTML='<i class="ti ti-loader-2" style="animation:spin 0.8s linear infinite;margin-right:4px"></i>Step 2/3: Wiping config directory…';
+    },600);
+    setTimeout(()=>{
+      if(st) st.innerHTML='<i class="ti ti-loader-2" style="animation:spin 0.8s linear infinite;margin-right:4px"></i>Step 3/3: Waiting for server to restart…';
+      if(st) st.style.color='var(--accent-light)';
+    },1200);
+  }
 
   let tries=0;
   const poll=setInterval(async()=>{
