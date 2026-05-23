@@ -1,29 +1,11 @@
 # hydracast.spec  —  Standalone build (no Google Auth)
-# ─────────────────────────────────────────────────────
-# Build:  pyinstaller hydracast.spec --clean --noconfirm
-#
-# Output: dist/HydraCast/hydracast.exe   (one-dir, self-contained)
-#
-# What changed vs the old spec:
-#   • Removed all google.auth / google-oauth2 / googleapiclient references
-#     (datas, hiddenimports) — not needed for standalone use.
-#   • Added 'excludes' list to shed unused heavy packages (test suites,
-#     tkinter, matplotlib, etc.) that PyInstaller may drag in transitively.
-#   • Removed pkg_resources.py2_warn (deprecated shim, causes warnings on
-#     modern pip/setuptools).
-#   • Fixed icon path: resources/HydraCast.ico  (matches actual filename in
-#     the repo; old spec referenced resources/shourav.ico which doesn't exist
-#     and causes a build warning / missing-icon on the final .exe).
-#   • upx=False on COLLECT to avoid UPX corrupting binary data files;
-#     UPX is still applied to the EXE stub only (upx=True on EXE).
-
 import sys
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
 
-# ── Package data needed at runtime ────────────────────────────────────────────
+# Only collect holidays data; Google Auth is excluded entirely.
 holidays_datas = collect_data_files('holidays')
 
 a = Analysis(
@@ -31,18 +13,17 @@ a = Analysis(
     pathex=['.'],
     binaries=[],
     datas=[
-        # hc package (non-py files, e.g. templates, static assets inside hc/)
+        # hc package non-py files
         ('hc', 'hc'),
-        # Web/UI resources (SVG, ICO, logo, etc.)
+        # resources folder (icon, SVG, etc.)
         ('resources', 'resources'),
-        # Pre-bundled runtime binaries: mediamtx.exe + ffmpeg in bin/bin/
-        # Both are copied into the output bin/ tree as-is.
+        # bin folder — mediamtx.exe + bin/bin/ffmpeg.exe etc. included as-is
         ('bin', 'bin'),
-        # holidays locale data (required by the holiday-store module)
+        # holidays locale/data files
         *holidays_datas,
     ],
     hiddenimports=[
-        # ── hc sub-modules (imported dynamically at runtime) ──────────────────
+        # ── hc submodules (dynamically imported) ─────────────────────────────
         'hc.compliance',
         'hc.constants',
         'hc.dependency',
@@ -74,60 +55,28 @@ a = Analysis(
         'hc.web_settings_manager',
         'hc.web_upload',
         'hc.worker',
-        # ── stdlib modules that PyInstaller sometimes misses ──────────────────
+        # ── stdlib / third-party ─────────────────────────────────────────────
+        'holidays',
+        'rich.console',
+        'psutil',
         'ctypes',
         'ctypes.wintypes',
         'email.mime.multipart',
         'email.mime.text',
-        # ── third-party ───────────────────────────────────────────────────────
-        'rich.console',
-        'psutil',
-        'holidays',
     ],
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[],
-    # ── Explicitly exclude packages we do NOT use ─────────────────────────────
-    # This shrinks the bundle and avoids pulling in unneeded transitive deps.
+    # Explicitly exclude Google Auth packages to keep the EXE small.
     excludes=[
-        # Google ecosystem (removed from this build)
         'google',
         'google.auth',
         'google.oauth2',
         'google_auth_oauthlib',
         'googleapiclient',
-        # GUI toolkits — HydraCast is a console/TUI app
-        'tkinter',
-        '_tkinter',
-        'wx',
-        'PyQt5',
-        'PyQt6',
-        'PySide2',
-        'PySide6',
-        # Heavy scientific/plotting libs not used at runtime
-        'matplotlib',
-        'numpy',
-        'pandas',
-        'scipy',
-        'PIL',
-        'cv2',
-        # Test frameworks
-        'pytest',
-        'unittest',
-        'doctest',
-        # IPython / Jupyter
-        'IPython',
-        'jupyter',
-        'notebook',
-        # Misc unused
-        'xmlrpc',
-        'pydoc',
-        'pdb',
-        'profile',
-        'cProfile',
-        'difflib',
-        'distutils',
+        'httplib2',
+        'uritemplate',
     ],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -140,21 +89,14 @@ exe = EXE(
     pyz,
     a.scripts,
     [],
-    exclude_binaries=True,          # one-dir mode — binaries go in COLLECT
+    exclude_binaries=True,           # one-dir mode (dist/HydraCast/)
     name='hydracast',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,                       # compress the EXE stub (needs UPX in PATH)
-    upx_exclude=[                   # never UPX-compress these — they break
-        'vcruntime140.dll',
-        'python*.dll',
-        'ffmpeg.exe',
-        'ffprobe.exe',
-        'mediamtx.exe',
-    ],
-    console=True,                   # TUI app — keep the console window
-    icon='resources/HydraCast.ico', # must exist; build will warn if absent
+    upx=True,                        # compress if UPX is installed
+    console=True,                    # TUI needs a visible console
+    icon='resources/HydraCast.ico',  # corrected icon filename
 )
 
 coll = COLLECT(
@@ -163,7 +105,13 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=False,
-    upx=False,          # do NOT UPX the collected binaries — safe for data files
-    upx_exclude=[],
-    name='HydraCast',   # dist/HydraCast/  output folder
+    upx=True,
+    upx_exclude=[
+        # Do not UPX-compress native binaries — they are already compressed
+        # and double-compression often breaks them.
+        'ffmpeg.exe',
+        'ffprobe.exe',
+        'mediamtx.exe',
+    ],
+    name='HydraCast',                # output folder: dist/HydraCast/
 )
