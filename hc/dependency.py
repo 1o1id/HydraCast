@@ -292,60 +292,19 @@ class DependencyManager:
     @classmethod
     def _install_ffmpeg_windows(cls, console: object) -> bool:
         """
-        Ensure FFmpeg (and FFprobe) are available on Windows.
+        Install FFmpeg (and FFprobe) on Windows via ``winget``.
 
-        Resolution order — winget is only attempted as a last resort:
-          1. bin/ffmpeg.exe already present  → use it (no-op).
-          2. HydraCast_internal/bin/ffmpeg.exe present → copy to bin/.
-          3. System PATH (shutil.which / cmd where) → use from PATH.
-          4. winget install Gyan.FFmpeg → last resort, requires internet.
-
-        This mirrors _find_binary() but is kept here so download_ffmpeg()
-        has a single Windows entry-point with clear, auditable steps.
+        winget installs Gyan's build which includes both ffmpeg.exe and
+        ffprobe.exe and adds them to the system PATH automatically.
+        Returns True if winget exited successfully.
         """
         from hc.constants import CG, CR, CY
 
-        # ── 1. Already in bin/ ─────────────────────────────────────────────
-        local = BIN_DIR() / FFMPEG_BIN_NAME
-        if local.exists():
-            console.print(f"[{CG}]✔  FFmpeg already present → {local}[/]")
-            return True
-
-        # ── 2. HydraCast_internal/bin/ → copy into bin/ ───────────────────
-        copied = _copy_from_internal(FFMPEG_BIN_NAME)
-        if copied is not None:
-            console.print(
-                f"[{CG}]✔  FFmpeg copied from HydraCast_internal/bin/ → {copied}[/]"
-            )
-            # Also copy ffprobe if available
-            _copy_from_internal(FFPROBE_BIN_NAME)
-            return True
-
-        # ── 3. System PATH ─────────────────────────────────────────────────
-        sys_ff = shutil.which(FFMPEG_BIN_NAME) or shutil.which("ffmpeg")
-        if sys_ff:
-            console.print(f"[{CG}]✔  FFmpeg found on system PATH → {sys_ff}[/]")
-            # Copy into bin/ so it becomes the canonical runtime location.
-            try:
-                local.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(sys_ff, local)
-                console.print(f"[{CG}]   Copied to bin/ for consistent runtime access.[/]")
-                # Mirror ffprobe if it sits next to ffmpeg on PATH.
-                sys_fp = shutil.which(FFPROBE_BIN_NAME) or shutil.which("ffprobe")
-                if sys_fp:
-                    shutil.copy2(sys_fp, BIN_DIR() / FFPROBE_BIN_NAME)
-            except Exception as exc:
-                log.warning("[dep] Could not copy PATH FFmpeg into bin/: %s", exc)
-                # Non-fatal: the PATH version is still usable.
-            return True
-
-        # ── 4. winget — last resort (requires internet + UAC) ─────────────
         if not shutil.which("winget"):
             console.print(
-                f"[{CR}]✘  FFmpeg not found and winget is not available.[/]\n"
+                f"[{CR}]✘  winget is not available on this system.[/]\n"
                 f"[{CY}]   Install FFmpeg manually from "
-                f"https://www.gyan.dev/ffmpeg/builds/ and place ffmpeg.exe "
-                f"in the bin/ folder next to hydracast.exe.[/]"
+                f"https://www.gyan.dev/ffmpeg/builds/ and add it to PATH.[/]"
             )
             return False
 
@@ -412,8 +371,27 @@ class DependencyManager:
         """
         from hc.constants import CG, CR, CY
 
-        # ── Windows: delegate entirely to winget ──────────────────────────────
+        # ── Windows: check bin/bin/ sub-directory first (Gyan bundle layout) ──
+        # Gyan's release zip unpacks as bin/bin/ffmpeg.exe.  When the user has
+        # dropped that folder next to HydraCast, _find_binary() already finds
+        # ffmpeg.exe via BIN_DIR(), but ffprobe may live one level deeper.
+        # This block explicitly promotes bin/bin/* into bin/ so the canonical
+        # path is always BIN_DIR()/<name>.
         if IS_WIN:
+            bin_bin = BIN_DIR() / "bin"
+            if bin_bin.is_dir():
+                for _name in (FFMPEG_BIN_NAME, FFPROBE_BIN_NAME):
+                    _src = bin_bin / _name
+                    _dst = BIN_DIR() / _name
+                    if _src.exists() and not _dst.exists():
+                        try:
+                            shutil.copy2(_src, _dst)
+                            log.info("[dep] Promoted %s from bin/bin/ → bin/", _name)
+                        except Exception as _exc:
+                            log.warning("[dep] Could not promote %s: %s", _name, _exc)
+            # Re-check after promotion; only fall through to winget if still missing.
+            if cls._find_binary(FFMPEG_BIN_NAME):
+                return True
             return cls._install_ffmpeg_windows(console)
 
         # ── Linux / macOS: static archive download ────────────────────────────
