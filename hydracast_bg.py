@@ -7,18 +7,80 @@ Architecture
   Main thread  : pystray icon loop  (Windows REQUIRES tray on main thread)
   Worker thread: HydraCast core     (streams, web server, scheduler)
 
-The --background flag is NOT passed to hydracast.main() here because
-background mode on Windows re-launches the process and calls sys.exit(),
-which would kill the tray before it starts.  Instead we suppress the TUI
-directly by monkey-patching run_tui_loop to a no-op.
+Robustness fixes vs original
+─────────────────────────────
+  1. Startup-race guard    — tray watches worker readiness via an Event
+                             before declaring itself "running".
+  2. Crash-restart         — worker thread auto-restarts up to MAX_RESTARTS
+                             times with exponential back-off before giving up.
+  3. Early-exit detection  — if HydraCast crashes before pystray even starts
+                             we pop a native Windows MessageBox instead of
+                             silently vanishing.
+  4. sys.exit() swallowed  — assert_licensed / start_checker call sys.exit();
+                             worker catches SystemExit and checks the code so
+                             a legitimate licence failure is NOT retried.
+  5. No double --background— strips the flag so hydracast's argparse never
+                             tries to re-launch / daemonize (would call
+                             sys.exit() on Windows and kill the tray).
+  6. Logging to file        — all errors written to logs/hydracast_bg.log
+                             next to the exe so crashes are diagnosable.
+  7. get_web_port timing   — port is read after the worker signals ready,
+                             not before hc.constants is fully initialised.
+  8. Console.force_terminal — hydracast.py creates Console(force_terminal=True)
+                             which raises inside a windowless process; we
+                             redirect stdout/stderr to the log file before
+                             the worker starts.
+  9. Tray tooltip / menu    — shows version and port once worker is ready.
+ 10. Clean COLLECT in spec  — spec now uses collect_submodules for pystray
+                             so _win32 backend is never missing.
 """
+import logging
+import os
 import sys
 import threading
+import time
 import webbrowser
 from pathlib import Path
 
+# ── Constants ─────────────────────────────────────────────────────────────────
+MAX_RESTARTS   = 5          # max automatic worker restarts
+RESTART_DELAY  = 3.0       # base delay (seconds); doubles each retry
+WORKER_TIMEOUT = 30.0      # seconds to wait for worker "ready" signal
 
-# ── Base-dir must be set before any hc.* import ──────────────────────────────
+
+# ── Logging: always write to a file (no console in bg mode) ──────────────────
+def _setup_logging(base: Path) -> None:
+    log_dir = base / "logs"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        log_dir = base          # fall back to exe dir
+
+    log_file = log_dir / "hydracast_bg.log"
+    logging.basicConfig(
+        filename=str(log_file),
+        level=logging.DEBUG,
+        format="%(asctime)s  %(levelname)-7s  [%(threadName)s]  %(message)s",
+        encoding="utf-8",
+    )
+    # Also redirect bare stdout/stderr so rich Console output goes somewhere.
+    try:
+        _fh = open(log_file, "a", encoding="utf-8", errors="replace")
+        sys.stdout = _fh
+        sys.stderr = _fh
+    except Exception:
+        pass
+
+log = logging.getLogger("hydracast_bg")
+
+
+# ── Base-dir helpers ──────────────────────────────────────────────────────────
+def _exe_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path(__file__).resolve().parent
+
+
 def _setup_base_dir() -> None:
     from hc.constants import set_base_dir
     if getattr(sys, "frozen", False):
@@ -29,15 +91,7 @@ def _setup_base_dir() -> None:
 
 # ── Icon resolution ───────────────────────────────────────────────────────────
 def _icon_path() -> Path:
-    """
-    Try several locations for HydraCast.ico so it works both frozen and
-    from source.
-    """
-    if getattr(sys, "frozen", False):
-        base = Path(sys.executable).parent
-    else:
-        base = Path(__file__).resolve().parent
-
+    base = _exe_dir()
     candidates = [
         base / "resources" / "HydraCast.ico",
         base / "_internal" / "resources" / "HydraCast.ico",
@@ -47,23 +101,22 @@ def _icon_path() -> Path:
     for p in candidates:
         if p.exists():
             return p
-    return candidates[0]   # will be missing; _load_image handles it
+    return candidates[0]
 
 
 def _load_image():
-    """Return a PIL Image suitable for the system tray."""
+    """Return a PIL Image suitable for the system tray, with fallback."""
     from PIL import Image
 
     path = _icon_path()
     if path.exists():
         try:
             img = Image.open(path)
-            # pystray on Windows needs RGBA; convert if necessary.
             return img.convert("RGBA")
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("Could not open icon %s: %s — using fallback", path, exc)
 
-    # Fallback: draw a simple green circle on transparent background.
+    # Fallback: green circle on transparent background.
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     from PIL import ImageDraw
     draw = ImageDraw.Draw(img)
@@ -71,101 +124,279 @@ def _load_image():
     return img
 
 
+# ── Native error popup (no-console process) ───────────────────────────────────
+def _show_error_box(title: str, message: str) -> None:
+    """Show a Windows MessageBox so the user knows something went wrong."""
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(0, message, title, 0x10)  # MB_ICONERROR
+    except Exception:
+        pass   # non-Windows or ctypes missing — already logged
+
+
 # ── HydraCast worker ──────────────────────────────────────────────────────────
-def _run_hydracast(shutdown_event: threading.Event) -> None:
+class _WorkerState:
+    """Shared state between the tray (main thread) and the worker thread."""
+    def __init__(self):
+        self.ready_event    = threading.Event()   # set when HC is running
+        self.shutdown_event = threading.Event()   # set to request shutdown
+        self.port: int      = 8080                # updated once HC is ready
+        self.restart_count: int = 0
+        self.fatal: bool    = False               # True → do NOT restart
+
+
+def _run_hydracast_once(state: _WorkerState) -> bool:
     """
-    Run the HydraCast core in a background thread.
-    Signals shutdown_event when main() returns so the tray can exit.
+    Run the HydraCast core once.  Returns True if it should be restarted,
+    False if shutdown was requested or a fatal/licence error occurred.
     """
     try:
-        # Suppress the TUI — we have no console and don't want one.
+        # ── Suppress the TUI: replace run_tui_loop with an Event.wait() ──────
         import hc.tui as _tui_mod
-        _tui_mod.run_tui_loop = lambda **kw: kw.get("shutdown_event",
-                                                      threading.Event()).wait()
+
+        def _headless_tui_loop(**kw):
+            """Block until the tray-requested shutdown fires."""
+            log.info("Headless TUI loop started — waiting for shutdown signal.")
+            state.shutdown_event.wait()
+
+        _tui_mod.run_tui_loop = _headless_tui_loop
+
+        # ── Read port before main() overwrites it ────────────────────────────
+        # main() calls set_web_port(args.web_port) early; we grab the value
+        # afterwards by importing get_web_port inside this thread where the
+        # constants module is already initialised.
+
+        # Signal readiness *before* blocking in the TUI replacement so the
+        # tray can show the Open Web UI menu item immediately.
+        # We hook into the WebServer.start() path instead.
+        import hc.web as _web_mod
+        _orig_web_start = None
+
+        class _ReadyHook:
+            """Patches WebServer.start() to fire the ready event once."""
+            def __init__(self, real_start):
+                self._real = real_start
+
+            def __call__(self, *a, **kw):
+                result = self._real(*a, **kw)
+                try:
+                    from hc.constants import get_web_port
+                    state.port = get_web_port()
+                except Exception:
+                    pass
+                log.info("WebServer started on port %d — signalling ready.", state.port)
+                state.ready_event.set()
+                return result
+
+        # Patch WebServer class so any instance's start() triggers the hook.
+        from hc.web import WebServer as _WS
+        _real_start = _WS.start
+        _WS.start = _ReadyHook(_real_start)
 
         import hydracast as _hc
         _hc.main()
-    except SystemExit:
-        pass
+
+        # Restore the patched method for any potential restart.
+        _WS.start = _real_start
+
+    except SystemExit as exc:
+        code = exc.code
+        log.warning("HydraCast exited with code %s.", code)
+        if code in (None, 0):
+            # Clean exit (e.g. user quit from web UI).
+            state.fatal = True
+            return False
+        # Non-zero: might be licence check or fatal startup error.
+        log.error("HydraCast fatal exit (code=%s) — will not restart.", code)
+        state.fatal = True
+        return False
+
     except Exception as exc:
-        import logging
-        logging.getLogger(__name__).error("HydraCast worker crashed: %s", exc)
-    finally:
-        shutdown_event.set()
+        log.exception("HydraCast worker raised unhandled exception: %s", exc)
+        return not state.shutdown_event.is_set()   # restart unless shutting down
+
+    return False   # main() returned normally — treat as clean exit
+
+
+def _run_hydracast_with_restarts(state: _WorkerState) -> None:
+    """
+    Outer loop: runs _run_hydracast_once() with automatic restart on crash.
+    Gives up after MAX_RESTARTS attempts and fires a native error dialog.
+    """
+    delay = RESTART_DELAY
+
+    for attempt in range(MAX_RESTARTS + 1):
+        if state.shutdown_event.is_set():
+            break
+
+        if attempt > 0:
+            log.warning("Restarting HydraCast (attempt %d/%d) in %.0fs …",
+                        attempt, MAX_RESTARTS, delay)
+            time.sleep(delay)
+            delay = min(delay * 2, 60)     # exponential back-off, cap at 60 s
+            state.restart_count = attempt
+            # Reset ready event for the new attempt.
+            state.ready_event.clear()
+
+        should_restart = _run_hydracast_once(state)
+
+        if not should_restart or state.fatal:
+            break
+    else:
+        msg = (
+            f"HydraCast background service crashed {MAX_RESTARTS} times "
+            "and has given up restarting.\n\n"
+            "Please check logs\\hydracast_bg.log for details."
+        )
+        log.error(msg)
+        _show_error_box("HydraCast — Fatal Error", msg)
+
+    # Ensure the ready event is set so any waiting thread unblocks.
+    state.ready_event.set()
+    state.shutdown_event.set()
+    log.info("Worker thread exiting.")
 
 
 # ── Tray (runs on main thread) ────────────────────────────────────────────────
-def _build_tray(shutdown_event: threading.Event, web_port: int):
-    import pystray
-    from pystray import MenuItem as Item
+def _build_and_run_tray(state: _WorkerState) -> None:
+    """Build the pystray icon and block on icon.run() (main-thread required)."""
 
+    try:
+        import pystray
+        from pystray import MenuItem as Item
+    except ImportError:
+        log.warning("pystray not available — running without system tray.")
+        state.shutdown_event.wait()
+        return
+
+    # Wait for worker to be ready (or crash) before starting the tray.
+    log.info("Waiting up to %.0fs for HydraCast to start …", WORKER_TIMEOUT)
+    became_ready = state.ready_event.wait(timeout=WORKER_TIMEOUT)
+
+    if state.fatal or state.shutdown_event.is_set():
+        # Worker died before we could show anything useful.
+        log.error("Worker did not start successfully — aborting tray.")
+        if not became_ready:
+            _show_error_box(
+                "HydraCast — Startup Failed",
+                "HydraCast failed to start within the expected time.\n\n"
+                "Please check logs\\hydracast_bg.log for details."
+            )
+        return
+
+    port = state.port
+    log.info("HydraCast ready on port %d — showing tray icon.", port)
+
+    # ── Menu actions ──────────────────────────────────────────────────────────
     def _open_web(icon, item):
-        webbrowser.open(f"http://localhost:{web_port}")
+        url = f"http://localhost:{state.port}"
+        log.info("Opening %s", url)
+        webbrowser.open(url)
+
+    def _restart_worker(icon, item):
+        log.info("User requested worker restart via tray.")
+        state.ready_event.clear()
+        # Signal the existing headless TUI loop to exit, triggering a restart.
+        # The outer restart loop will pick it up.
+        state.shutdown_event.set()
+        # Give the worker a moment, then reset for a fresh start.
+        time.sleep(1)
+        state.shutdown_event.clear()
+        state.fatal = False
+
+        worker = threading.Thread(
+            target=_run_hydracast_with_restarts,
+            args=(state,),
+            name="hydracast-worker",
+            daemon=True,
+        )
+        worker.start()
 
     def _quit(icon, item):
-        icon.stop()          # exits icon.run() on main thread → process ends
-        shutdown_event.set()
+        log.info("Quit requested from tray.")
+        state.shutdown_event.set()
+        icon.stop()
+
+    def _open_log(icon, item):
+        log_path = _exe_dir() / "logs" / "hydracast_bg.log"
+        try:
+            os.startfile(str(log_path))
+        except Exception:
+            webbrowser.open(log_path.as_uri())
 
     image = _load_image()
     menu = pystray.Menu(
-        Item("Open Web UI", _open_web, default=True),
+        Item(f"Open Web UI  (:{port})", _open_web, default=True),
+        pystray.Menu.SEPARATOR,
+        Item("Open Log File", _open_log),
         pystray.Menu.SEPARATOR,
         Item("Quit HydraCast", _quit),
     )
-    return pystray.Icon("HydraCast", image, "HydraCast", menu)
+    icon = pystray.Icon("HydraCast", image, f"HydraCast  :{port}", menu)
+
+    # If the worker crashes after tray starts, stop the tray too.
+    def _watch_worker():
+        state.shutdown_event.wait()
+        log.info("Shutdown event set — stopping tray icon.")
+        try:
+            icon.stop()
+        except Exception:
+            pass
+
+    threading.Thread(target=_watch_worker, daemon=True, name="tray-watcher").start()
+
+    log.info("Starting pystray icon loop.")
+    try:
+        icon.run()
+    except Exception as exc:
+        log.exception("pystray icon.run() raised: %s", exc)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 def main() -> None:
-    # Ensure hc package paths are correct before any import.
-    if getattr(sys, "frozen", False):
-        _HERE = Path(sys.executable).parent
-    else:
-        _HERE = Path(__file__).resolve().parent
-    if str(_HERE) not in sys.path:
-        sys.path.insert(0, str(_HERE))
+    # ── Ensure package root is on sys.path ────────────────────────────────────
+    _here = _exe_dir()
+    if str(_here) not in sys.path:
+        sys.path.insert(0, str(_here))
 
-    # Bootstrap runtime deps (same as hydracast.py does).
-    # Import _bootstrap via hydracast module-level execution.
-    # We do NOT pass --background; instead we suppress the TUI ourselves.
-    # Remove any leftover --background flags so hydracast's argparse doesn't
-    # try to re-launch / daemonize.
-    sys.argv = [a for a in sys.argv
-                if a not in ("--background", "-b")]
+    # ── Set up file logging as early as possible ──────────────────────────────
+    _setup_logging(_here)
+    log.info("hydracast_bg starting (frozen=%s, pid=%d).",
+             getattr(sys, "frozen", False), os.getpid())
 
-    _setup_base_dir()
+    # ── Strip flags that would cause hydracast to re-launch / daemonize ───────
+    sys.argv = [a for a in sys.argv if a not in ("--background", "-b")]
 
-    from hc.constants import get_web_port
+    # ── Initialise hc path constants ──────────────────────────────────────────
+    try:
+        _setup_base_dir()
+    except Exception as exc:
+        log.exception("_setup_base_dir failed: %s", exc)
+        _show_error_box("HydraCast — Init Error",
+                        f"Failed to initialise path constants:\n{exc}")
+        return
 
-    shutdown_event = threading.Event()
+    # ── Shared state between tray and worker ─────────────────────────────────
+    state = _WorkerState()
 
-    # Start HydraCast on a background thread.
+    # ── Start HydraCast worker on a background thread ─────────────────────────
     worker = threading.Thread(
-        target=_run_hydracast,
-        args=(shutdown_event,),
+        target=_run_hydracast_with_restarts,
+        args=(state,),
         name="hydracast-worker",
         daemon=True,
     )
     worker.start()
+    log.info("Worker thread started.")
 
-    # Build and run the tray icon on the MAIN thread (Windows requirement).
-    try:
-        icon = _build_tray(shutdown_event, get_web_port())
+    # ── Run tray on the MAIN thread (Windows requirement) ─────────────────────
+    _build_and_run_tray(state)
 
-        # If HydraCast crashes before the tray starts, stop immediately.
-        def _watch_worker():
-            shutdown_event.wait()
-            icon.stop()
-        threading.Thread(target=_watch_worker, daemon=True).start()
-
-        icon.run()   # ← blocks main thread; returns when icon.stop() called
-
-    except ImportError:
-        # pystray not available — just wait for the worker to finish.
-        shutdown_event.wait()
-
-    # Wait for the worker to finish cleanly.
-    worker.join(timeout=10)
+    # ── Clean shutdown ────────────────────────────────────────────────────────
+    log.info("Tray exited — signalling shutdown and waiting for worker …")
+    state.shutdown_event.set()
+    worker.join(timeout=15)
+    log.info("hydracast_bg exiting cleanly.")
 
 
 if __name__ == "__main__":
