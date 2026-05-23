@@ -20,13 +20,13 @@ Priority order
 
   3. Bundled fallback cert (pre-generated, embedded in this module)
        → Written to <install_dir>/ssl/ if possible,
-         otherwise to  <install_dir>/HydraCast_internal/certifi/
+         otherwise to  <install_dir>/_internal/certifi/
          (a separate bundled-cert folder; always writable when shipped).
 
 Location fallback
 ─────────────────
   Primary   : <install_dir>/ssl/cert.pem   +  ssl/key.pem
-  Secondary : <install_dir>/HydraCast_internal/certifi/cert.pem  +  key.pem
+  Secondary : <install_dir>/_internal/certifi/cert.pem  +  key.pem
 
 Install-dir resolution
 ──────────────────────
@@ -144,13 +144,13 @@ def _ssl_dir() -> Path:
 
 def _certifi_dir() -> Path:
     """
-    Fallback certificate directory: <install_dir>/HydraCast_internal/certifi/
+    Fallback certificate directory: <install_dir>/_internal/certifi/
 
     This is a separate folder shipped alongside the .exe as a dedicated
     cert fallback location.  It is always created at runtime if absent,
     so it is reliably writable on any standard installation.
     """
-    return _install_dir() / "HydraCast_internal" / "certifi"
+    return _install_dir() / "_internal" / "certifi"
 
 
 def _cert_is_valid(cert_path: Path, key_path: Path, min_days: int = 30) -> bool:
@@ -292,7 +292,7 @@ def ensure_ssl(console=None) -> Tuple[Path, Path]:
     Raises
     ------
     RuntimeError
-        When neither ssl/ nor HydraCast_internal/certifi/ can be written to.
+        When neither ssl/ nor _internal/certifi/ can be written to.
     """
     global CERT_PATH, KEY_PATH
 
@@ -316,7 +316,7 @@ def ensure_ssl(console=None) -> Tuple[Path, Path]:
         return ssl_cert, ssl_key
 
     if _cert_is_valid(fb_cert, fb_key):
-        _msg(f"SSL  : Existing certificate reused from HydraCast_internal/certifi/", "dim yellow")
+        _msg(f"SSL  : Existing certificate reused from _internal/certifi/", "dim yellow")
         CERT_PATH, KEY_PATH = fb_cert, fb_key
         return fb_cert, fb_key
 
@@ -328,17 +328,17 @@ def ensure_ssl(console=None) -> Tuple[Path, Path]:
         CERT_PATH, KEY_PATH = cert_path, key_path
         return cert_path, key_path
     except Exception as exc:
-        log.error("[SSL] ssl/ not writable (%s) — trying HydraCast_internal/certifi/ …", exc)
+        log.error("[SSL] ssl/ not writable (%s) — trying _internal/certifi/ …", exc)
         _msg(
-            f"SSL  : ssl/ not writable ({exc}) — falling back to HydraCast_internal/certifi/",
+            f"SSL  : ssl/ not writable ({exc}) — falling back to _internal/certifi/",
             "yellow",
         )
 
-    # ── 3. Last resort: HydraCast_internal/certifi/ with bundled cert ─────────
+    # ── 3. Last resort: _internal/certifi/ with bundled cert ─────────
     try:
         cert_path, key_path = _try_write_to(_certifi_dir(), generate=False)
         _msg(
-            f"SSL  : Fallback certificate written to HydraCast_internal/certifi/",
+            f"SSL  : Fallback certificate written to _internal/certifi/",
             "yellow",
         )
         CERT_PATH, KEY_PATH = cert_path, key_path
