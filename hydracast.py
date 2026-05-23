@@ -79,12 +79,9 @@ def _bootstrap() -> None:
 
     import importlib.util as _ilu
     needed = {
-        "rich":                  "rich>=13.0",
-        "psutil":                "psutil>=5.9",
-        "google.auth":           "google-auth>=2.0",
-        "google_auth_oauthlib":  "google-auth-oauthlib>=1.0",
-        "googleapiclient":       "google-api-python-client>=2.0",
-        "holidays":              "holidays>=0.45",
+        "rich":     "rich>=13.0",
+        "psutil":   "psutil>=5.9",
+        "holidays": "holidays>=0.45",
     }
 
     def _is_available(mod: str) -> bool:
