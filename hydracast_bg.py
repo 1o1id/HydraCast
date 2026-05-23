@@ -56,11 +56,32 @@ WORKER_TIMEOUT = 30.0      # seconds to wait for worker "ready" signal
 
 # ── Logging: always write to a file (no console in bg mode) ──────────────────
 def _setup_logging(base: Path) -> None:
-    log_dir = base / "logs"
-    try:
+    # Program Files is read-only for normal users, so prefer APPDATA first.
+    # Fall back to the exe dir only if APPDATA is unavailable (unusual).
+    appdata = os.environ.get("APPDATA")
+    candidates = []
+    if appdata:
+        candidates.append(Path(appdata) / "HydraCast" / "logs")
+    candidates.append(base / "logs")   # last resort (needs admin if in Program Files)
+
+    log_dir = None
+    for candidate in candidates:
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            # Verify we can actually write here before committing.
+            test_file = candidate / ".write_test"
+            test_file.touch()
+            test_file.unlink()
+            log_dir = candidate
+            break
+        except Exception:
+            continue
+
+    if log_dir is None:
+        # Absolute last resort: temp dir — always writable.
+        import tempfile
+        log_dir = Path(tempfile.gettempdir()) / "HydraCast"
         log_dir.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        log_dir = base          # fall back to exe dir
 
     log_file = log_dir / "hydracast_bg.log"
     logging.basicConfig(
@@ -372,7 +393,15 @@ def _build_and_run_tray(state: _WorkerState) -> None:
         icon.stop()
 
     def _open_log(icon, item):
-        log_path = _exe_dir() / "logs" / "hydracast_bg.log"
+        # Mirror the path-resolution logic in _setup_logging.
+        appdata = os.environ.get("APPDATA")
+        log_path = None
+        if appdata:
+            candidate = Path(appdata) / "HydraCast" / "logs" / "hydracast_bg.log"
+            if candidate.exists():
+                log_path = candidate
+        if log_path is None:
+            log_path = _exe_dir() / "logs" / "hydracast_bg.log"
         try:
             os.startfile(str(log_path))
         except Exception:
