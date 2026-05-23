@@ -1,29 +1,28 @@
-# hydracast.spec  —  Standalone build (no Google Auth)
+# hydracast_bg.spec  —  Background + system tray build (no Google Auth)
 import sys
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
 
-# Only collect holidays data; Google Auth is excluded entirely.
 holidays_datas = collect_data_files('holidays')
 
+# pystray uses pkg_resources / data files on some backends
+pystray_datas  = collect_data_files('pystray')
+
 a = Analysis(
-    ['hydracast.py'],
+    ['hydracast_bg.py'],
     pathex=['.'],
     binaries=[],
     datas=[
-        # hc package non-py files
         ('hc', 'hc'),
-        # resources folder (icon, SVG, etc.)
         ('resources', 'resources'),
-        # bin folder — mediamtx.exe + bin/bin/ffmpeg.exe etc. included as-is
         ('bin', 'bin'),
-        # holidays locale/data files
         *holidays_datas,
+        *pystray_datas,
     ],
     hiddenimports=[
-        # ── hc submodules (dynamically imported) ─────────────────────────────
+        # ── hc submodules ─────────────────────────────────────────────────────
         'hc.compliance',
         'hc.constants',
         'hc.dependency',
@@ -55,7 +54,14 @@ a = Analysis(
         'hc.web_settings_manager',
         'hc.web_upload',
         'hc.worker',
-        # ── stdlib / third-party ─────────────────────────────────────────────
+        # ── tray dependencies ─────────────────────────────────────────────────
+        'pystray',
+        'pystray._win32',           # Windows tray backend
+        'PIL',
+        'PIL.Image',
+        'PIL.IcoImagePlugin',       # needed to open .ico files
+        'PIL.PngImagePlugin',
+        # ── stdlib / other ────────────────────────────────────────────────────
         'holidays',
         'rich.console',
         'psutil',
@@ -63,8 +69,8 @@ a = Analysis(
         'ctypes.wintypes',
         'email.mime.multipart',
         'email.mime.text',
+        'webbrowser',
     ],
-    # Explicitly exclude Google Auth packages to keep the EXE small.
     excludes=[
         'google',
         'google.auth',
@@ -89,14 +95,14 @@ exe = EXE(
     pyz,
     a.scripts,
     [],
-    exclude_binaries=True,           # one-dir mode (dist/HydraCast/)
-    name='hydracast',
+    exclude_binaries=True,
+    name='hydracast_bg',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,                        # compress if UPX is installed
-    console=True,                    # TUI needs a visible console
-    icon='resources/HydraCast.ico',  # corrected icon filename
+    upx=True,
+    console=False,               # no console window — tray only
+    icon='resources/HydraCast.ico',
 )
 
 coll = COLLECT(
@@ -107,11 +113,9 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[
-        # Do not UPX-compress native binaries — they are already compressed
-        # and double-compression often breaks them.
         'ffmpeg.exe',
         'ffprobe.exe',
         'mediamtx.exe',
     ],
-    name='HydraCast',                # output folder: dist/HydraCast/
+    name='HydraCast',            # same dist folder as hydracast.exe
 )
