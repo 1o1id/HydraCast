@@ -1,11 +1,39 @@
 """
 hc/dependency.py  —  Download MediaMTX, FFmpeg, and FFprobe.
+
+Binary resolution order (v6.4+)
+────────────────────────────────
+  For mediamtx, ffmpeg, and ffprobe the lookup follows this priority:
+
+  1. bin/  (next to hydracast.exe / repo root)
+       — checked first; if found, used immediately.
+
+  2. HydraCast_internal/bin/  (a separate bundled-binary folder)
+       — if a binary is present here but absent from bin/, it is COPIED
+         into bin/ and then used from there.  This ensures that bin/ is
+         always the canonical runtime location.
+
+  3. System PATH  (for ffmpeg / ffprobe only)
+       — checked via shutil.which + subprocess version-probe and, on
+         Windows, via ``cmd /c where``.
+
+  4. Download from the internet
+       — only attempted when NONE of the above locations contain the
+         binary.  The download URL catalogue (MEDIAMTX_URLS /
+         _FFMPEG_ARCHIVES / _FFPROBE_ARCHIVES) is unchanged.
+
+The HydraCast_internal directory is resolved relative to the install dir
+(_install_dir() in ssl_bootstrap.py uses the same logic):
+  Frozen (.exe) : Path(sys.executable).parent / "HydraCast_internal"
+  Source (.py)  : repo_root / "HydraCast_internal"
 """
 from __future__ import annotations
 
+import logging
 import shutil
 import stat
 import subprocess
+import sys
 import tarfile
 import urllib.request
 import zipfile
@@ -16,6 +44,57 @@ from hc.constants import (
     ARCH_KEY, BIN_DIR, FFMPEG_BIN_NAME, FFPROBE_BIN_NAME,
     IS_WIN, MEDIAMTX_BIN, MEDIAMTX_URLS, MEDIAMTX_VER, OS_KEY,
 )
+
+log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# HydraCast_internal/bin  —  secondary binary source
+# ---------------------------------------------------------------------------
+
+def _install_dir() -> Path:
+    """
+    Return the directory containing hydracast.exe (frozen) or the repo root
+    (source).  Mirrors the same helper in ssl_bootstrap.py.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    # hc/dependency.py  →  ../  →  repo root
+    return Path(__file__).resolve().parent.parent
+
+
+def _internal_bin_dir() -> Path:
+    """
+    Return <install_dir>/HydraCast_internal/bin — the secondary location
+    where pre-bundled binaries may be shipped alongside the .exe.
+    """
+    return _install_dir() / "HydraCast_internal" / "bin"
+
+
+def _copy_from_internal(bin_name: str) -> Optional[Path]:
+    """
+    Look for *bin_name* in HydraCast_internal/bin/.
+    If found, copy it into BIN_DIR() and return the destination path.
+    Returns None when the binary is absent from the internal folder or
+    when the copy fails.
+    """
+    src = _internal_bin_dir() / bin_name
+    if not src.exists():
+        return None
+    dest = BIN_DIR() / bin_name
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+        if not IS_WIN:
+            dest.chmod(dest.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+        log.info(
+            "[dep] Copied %s from HydraCast_internal/bin/ → %s", bin_name, dest
+        )
+        return dest
+    except Exception as exc:
+        log.warning(
+            "[dep] Could not copy %s from HydraCast_internal/bin/: %s", bin_name, exc
+        )
+        return None
 
 # ---------------------------------------------------------------------------
 # FFmpeg / FFprobe static-build download catalogue
@@ -75,12 +154,33 @@ class DependencyManager:
         """Return the resolved path to *name* if it is executable, else None.
 
         Checks (in order):
-          1. System PATH via shutil.which + a -version probe.
-          2. On Windows: ``cmd /c where <name>`` to catch binaries installed by
-             winget whose PATH update is not yet visible in the current process.
-          3. Local BIN_DIR() – accepted even when the version probe fails.
+          1. Local BIN_DIR() – the canonical runtime location.
+          2. HydraCast_internal/bin/ – if found, copies to BIN_DIR() first.
+          3. System PATH via shutil.which + a -version probe.
+          4. On Windows: ``cmd /c where <name>`` to catch winget installs whose
+             PATH update is not yet visible in the current process.
         """
-        # 1. System PATH
+        # 1. Local bin/ directory — primary location
+        local = BIN_DIR() / name
+        if local.exists():
+            for flag in ("-version", "--version"):
+                try:
+                    r = subprocess.run(
+                        [str(local), flag], capture_output=True, timeout=8
+                    )
+                    if r.returncode == 0:
+                        return str(local)
+                except Exception:
+                    pass
+            # Binary exists but version probe failed — return path anyway.
+            return str(local)
+
+        # 2. HydraCast_internal/bin/ — copy into bin/ then use from there
+        copied = _copy_from_internal(name)
+        if copied is not None:
+            return str(copied)
+
+        # 3. System PATH
         sys_path = shutil.which(name)
         if sys_path:
             for flag in ("-version", "--version"):
@@ -93,7 +193,7 @@ class DependencyManager:
                 except Exception:
                     pass
 
-        # 2. Windows: shell out so the child process inherits the *updated* PATH
+        # 4. Windows: shell out so the child process inherits the *updated* PATH
         #    that winget wrote to the registry (the current process started before
         #    winget modified PATH, so os.environ is stale).
         if IS_WIN:
@@ -108,21 +208,6 @@ class DependencyManager:
                         return found
             except Exception:
                 pass
-
-        # 3. Local bin/ directory
-        local = BIN_DIR() / name
-        if local.exists():
-            for flag in ("-version", "--version"):
-                try:
-                    r = subprocess.run(
-                        [str(local), flag], capture_output=True, timeout=8
-                    )
-                    if r.returncode == 0:
-                        return str(local)
-                except Exception:
-                    pass
-            # Binary exists but version probe failed — return path anyway.
-            return str(local)
 
         return None
 
@@ -298,10 +383,26 @@ class DependencyManager:
         ffprobe_dest = bin_dir / FFPROBE_BIN_NAME
         key          = (OS_KEY, ARCH_KEY)
 
-        # ── Already present? ──────────────────────────────────────────────────
+        # ── Already present in bin/? ───────────────────────────────────────────
         if ffmpeg_dest.exists():
             console.print(f"[{CG}]✔  FFmpeg already present.[/]")
             if not ffprobe_dest.exists():
+                cls._maybe_download_ffprobe(ffprobe_dest, key, console)
+            return True
+
+        # ── HydraCast_internal/bin/ fallback — copy both if available ─────────
+        ff_copied = _copy_from_internal(FFMPEG_BIN_NAME)
+        if ff_copied is not None:
+            console.print(
+                f"[{CG}]✔  FFmpeg copied from HydraCast_internal/bin/ → {ff_copied}[/]"
+            )
+            fp_copied = _copy_from_internal(FFPROBE_BIN_NAME)
+            if fp_copied is not None:
+                console.print(
+                    f"[{CG}]✔  FFprobe copied from HydraCast_internal/bin/ → {fp_copied}[/]"
+                )
+            else:
+                # ffprobe missing from internal — attempt platform-specific download
                 cls._maybe_download_ffprobe(ffprobe_dest, key, console)
             return True
 
@@ -406,7 +507,7 @@ class DependencyManager:
             return path
 
         console.print(
-            f"[{CY}]⚠  FFmpeg not found in PATH or bin/ — "
+            f"[{CY}]⚠  FFmpeg not found in bin/ or HydraCast_internal/bin/ — "
             f"attempting automatic download …[/]"
         )
         if cls.download_ffmpeg(console):
@@ -488,10 +589,19 @@ class DependencyManager:
         from hc.constants import CG, CR, CY
 
         mtx_bin = MEDIAMTX_BIN()
+
+        # 1. Already in bin/
         if mtx_bin.exists():
             con.print(f"[{CG}]✔  MediaMTX already present.[/]")
             return True
 
+        # 2. HydraCast_internal/bin/ — copy into bin/ first
+        copied = _copy_from_internal(mtx_bin.name)
+        if copied is not None:
+            con.print(f"[{CG}]✔  MediaMTX copied from HydraCast_internal/bin/ → {copied}[/]")
+            return True
+
+        # 3. Download from the internet
         url = DependencyManager._pick_mediamtx_url()
         if not url:
             con.print(f"[{CR}]✘  No MediaMTX build for {OS_KEY}/{ARCH_KEY}.[/]")
