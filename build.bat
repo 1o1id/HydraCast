@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-echo [HydraCast] Standalone build ^(no Google Auth^)
+echo [HydraCast] Standalone build (no Google Auth)
 
 REM ── Virtual environment ───────────────────────────────────────────────────
 if exist ".build_env\Scripts\activate.bat" (
@@ -17,32 +17,27 @@ if exist ".build_env\Scripts\activate.bat" (
 call .build_env\Scripts\activate.bat
 
 REM ── Dependencies ─────────────────────────────────────────────────────────
-REM  Track requirements hash so we only reinstall when the file changes.
 set REQ_HASH_FILE=.build_env\req.hash
 set REQ_FILE=requirements.txt
 
-REM Generate hash of requirements.txt (CertUtil is available on all Windows)
-for /f "tokens=*" %%H in ('certutil -hashfile "%REQ_FILE%" MD5 2^>nul ^| findstr /v ":"') do set CUR_HASH=%%H
+for /f "skip=1 tokens=*" %%H in ('certutil -hashfile "%REQ_FILE%" MD5 2^>nul') do (
+    if not defined CUR_HASH set CUR_HASH=%%H
+)
 
 set PREV_HASH=
 if exist "%REQ_HASH_FILE%" set /p PREV_HASH=<"%REQ_HASH_FILE%"
 
 if "!CUR_HASH!" == "!PREV_HASH!" (
-    echo [HydraCast] requirements.txt unchanged — skipping pip install.
+    echo [HydraCast] requirements.txt unchanged -- skipping pip install.
 ) else (
     echo [HydraCast] Installing / updating dependencies ...
-    REM Exclude Google Auth packages — not needed for standalone build.
-    pip install -r "%REQ_FILE%" ^
-        --ignore-requires-python -q ^
-        --constraint .build_env\constraints.txt 2>nul || ^
     pip install -r "%REQ_FILE%" -q
     if errorlevel 1 (
         echo [HydraCast] ERROR: pip install failed.
         pause & exit /b 1
     )
-    REM Uninstall Google Auth if it snuck in via a transitive dependency.
-    pip uninstall -y google-auth google-auth-oauthlib google-api-python-client ^
-        httplib2 uritemplate 2>nul
+    REM Remove Google Auth if pulled in transitively -- not needed for standalone build.
+    pip uninstall -y google-auth google-auth-oauthlib google-api-python-client httplib2 uritemplate 2>nul
     echo !CUR_HASH!>"%REQ_HASH_FILE%"
 )
 
