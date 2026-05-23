@@ -202,16 +202,22 @@ def _run_hydracast_once(state: _WorkerState) -> bool:
 
         _tui_mod.run_tui_loop = _headless_tui_loop
 
-        # ── Hook WebServer.start() to signal "ready" to the tray ─────────────
+        # ── Hook WebServer.__init__ to intercept the instance's start() ────────
+        # Patching _WS.start at class level fails because Python passes the
+        # WebServer instance as the first positional arg to the replacement
+        # callable, which our hook receives as its own 'self' — dropping the
+        # real instance entirely.  Wrapping __init__ lets us replace start()
+        # on the *instance* with a plain bound closure instead.
         from hc.web import WebServer as _WS
 
-        class _ReadyHook:
-            """Patches WebServer.start() to fire the ready event once."""
-            def __init__(self, real_start):
-                self._real = real_start
+        _real_init = _WS.__init__
 
-            def __call__(self, *a, **kw):
-                result = self._real(*a, **kw)
+        def _patched_init(ws_self, *a, **kw):
+            _real_init(ws_self, *a, **kw)           # run the real __init__
+            _bound_start = ws_self.start            # capture real bound method
+
+            def _hooked_start():
+                result = _bound_start()             # call real start()
                 try:
                     from hc.constants import get_web_port
                     state.port = get_web_port()
@@ -221,15 +227,16 @@ def _run_hydracast_once(state: _WorkerState) -> bool:
                 state.ready_event.set()
                 return result
 
-        _real_start = _WS.start
-        _WS.start = _ReadyHook(_real_start)
+            ws_self.start = _hooked_start           # shadow on instance only
+
+        _WS.__init__ = _patched_init
 
         try:
             import hydracast as _hc
             _hc.main()
         finally:
-            # Restore patched method whether main() succeeded or raised.
-            _WS.start = _real_start
+            # Restore __init__ so a restarted run gets a clean class.
+            _WS.__init__ = _real_init
 
     except SystemExit as exc:
         code = exc.code
