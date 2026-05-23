@@ -135,7 +135,7 @@ Section "HydraCast (required)" SecMain
 
     SetOutPath "$INSTDIR"
 
-    ; Copy all files from dist\HydraCast\
+    ; Copy all files from dist\HydraCast
     File /r "dist\HydraCast\*.*"
 
     ; Write uninstaller
