@@ -338,7 +338,12 @@ def _build_and_run_tray(state: _WorkerState) -> None:
 
     # ── Menu actions ──────────────────────────────────────────────────────────
     def _open_web(icon, item):
-        url = f"http://localhost:{state.port}"
+        try:
+            from hc.utils import _local_ip
+            ip = _local_ip()
+        except Exception:
+            ip = "localhost"
+        url = f"https://{ip}:{state.port}"
         log.info("Opening %s", url)
         webbrowser.open(url)
 
@@ -373,15 +378,20 @@ def _build_and_run_tray(state: _WorkerState) -> None:
         except Exception:
             webbrowser.open(log_path.as_uri())
 
+    try:
+        from hc.utils import _local_ip
+        _ip = _local_ip()
+    except Exception:
+        _ip = "localhost"
     image = _load_image()
     menu = pystray.Menu(
-        Item(f"Open Web UI  (:{port})", _open_web, default=True),
+        Item(f"Open Web UI  (https://{_ip}:{port})", _open_web, default=True),
         pystray.Menu.SEPARATOR,
         Item("Open Log File", _open_log),
         pystray.Menu.SEPARATOR,
         Item("Quit HydraCast", _quit),
     )
-    icon = pystray.Icon("HydraCast", image, f"HydraCast  :{port}", menu)
+    icon = pystray.Icon("HydraCast", image, f"HydraCast  https://{_ip}:{port}", menu)
 
     # If the worker crashes after tray starts, stop the tray too.
     def _watch_worker():
