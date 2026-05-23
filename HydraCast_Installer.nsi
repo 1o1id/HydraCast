@@ -1,5 +1,7 @@
+Unicode True
+
 ; ============================================================================
-;  HydraCast Installer — NSIS Script
+;  HydraCast Installer - NSIS Script
 ;  Produces a single compressed self-extracting EXE installer
 ;
 ;  Requirements (build machine):
@@ -10,27 +12,25 @@
 ;    makensis HydraCast_Installer.nsi
 ;
 ;  Features:
-;    • LZMA solid compression  (~60–70 % size reduction)
-;    • User-configurable install directory
-;    • Start Menu shortcut group (configurable)
-;    • Optional "Launch at Windows startup" checkbox
-;    • Desktop shortcut (optional)
-;    • Full uninstaller registered in Add/Remove Programs
-;    • Silent install support  (/S flag)
+;    - LZMA solid compression  (~60-70 % size reduction)
+;    - User-configurable install directory
+;    - Start Menu shortcut group (configurable)
+;    - Optional "Launch at Windows startup" checkbox
+;    - Desktop shortcut (optional)
+;    - Full uninstaller registered in Add/Remove Programs
+;    - Silent install support  (/S flag)
 ; ============================================================================
 
-Unicode True
-
-; ── Compression ──────────────────────────────────────────────────────────────
+; -- Compression --------------------------------------------------------------
 SetCompressor /SOLID lzma
-SetCompressorDictSize 64          ; 64 MB dictionary — best ratio for large dirs
+SetCompressorDictSize 64          ; 64 MB dictionary - best ratio for large dirs
 
-; ── Includes ─────────────────────────────────────────────────────────────────
+; -- Includes -----------------------------------------------------------------
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "WinMessages.nsh"
 
-; ── Product metadata ─────────────────────────────────────────────────────────
+; -- Product metadata ---------------------------------------------------------
 !define PRODUCT_NAME        "HydraCast"
 !define PRODUCT_VERSION     "6.4.0"
 !define PRODUCT_PUBLISHER   "rhshourav"
@@ -43,7 +43,7 @@ SetCompressorDictSize 64          ; 64 MB dictionary — best ratio for large di
 !define STARTUP_REG_KEY     "Software\Microsoft\Windows\CurrentVersion\Run"
 !define MUTEX_NAME          "HydraCastInstallerMutex"
 
-; ── Output ───────────────────────────────────────────────────────────────────
+; -- Output -------------------------------------------------------------------
 Name                "${PRODUCT_NAME} ${PRODUCT_VERSION}"
 OutFile             "HydraCast-${PRODUCT_VERSION}-Setup.exe"
 InstallDir          "$PROGRAMFILES64\${PRODUCT_NAME}"
@@ -52,7 +52,7 @@ RequestExecutionLevel admin
 ShowInstDetails     show
 ShowUninstDetails   show
 
-; ── MUI Configuration ────────────────────────────────────────────────────────
+; -- MUI Configuration --------------------------------------------------------
 !define MUI_ICON                          "${PRODUCT_ICON}"
 !define MUI_UNICON                        "${PRODUCT_ICON}"
 !define MUI_ABORTWARNING
@@ -64,7 +64,7 @@ ShowUninstDetails   show
 !define MUI_FINISHPAGE_LINK               "Visit HydraCast on GitHub"
 !define MUI_FINISHPAGE_LINK_LOCATION      "${PRODUCT_URL}"
 
-; ── Pages ─────────────────────────────────────────────────────────────────────
+; -- Pages --------------------------------------------------------------------
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE             "dist\HydraCast\_internal\cryptography-48.0.0.dist-info\licenses\LICENSE"
 !insertmacro MUI_PAGE_DIRECTORY
@@ -79,13 +79,13 @@ Page custom StartupPage StartupPageLeave
 
 !insertmacro MUI_LANGUAGE "English"
 
-; ── Variables ─────────────────────────────────────────────────────────────────
+; -- Variables ----------------------------------------------------------------
 Var StartupCheck      ; checkbox for "run at startup"
 Var DesktopCheck      ; checkbox for "create desktop shortcut"
 Var DoStartup         ; 1 = add startup entry
 Var DoDesktop         ; 1 = create desktop shortcut
 
-; ── Startup / Desktop options page ────────────────────────────────────────────
+; -- Startup / Desktop options page -------------------------------------------
 Function StartupPage
     !insertmacro MUI_HEADER_TEXT "Additional Options" "Choose extra installation options."
     nsDialogs::Create 1018
@@ -110,7 +110,7 @@ Function StartupPageLeave
     ${NSD_GetState} $DesktopCheck $DoDesktop
 FunctionEnd
 
-; ── Prevent multiple installer instances ──────────────────────────────────────
+; -- Prevent multiple installer instances -------------------------------------
 Function .onInit
     System::Call 'kernel32::CreateMutexW(i 0, i 1, t "${MUTEX_NAME}") i .r0 ?e'
     Pop $1
@@ -129,19 +129,19 @@ Function .onInit
     ${EndIf}
 FunctionEnd
 
-; ── Main install section ───────────────────────────────────────────────────────
+; -- Main install section -----------------------------------------------------
 Section "HydraCast (required)" SecMain
     SectionIn RO   ; cannot be deselected
 
     SetOutPath "$INSTDIR"
 
-    ; ── Copy all files from dist\HydraCast\ ──────────────────────────────────
+    ; Copy all files from dist\HydraCast\
     File /r "dist\HydraCast\*.*"
 
-    ; ── Write uninstaller ────────────────────────────────────────────────────
+    ; Write uninstaller
     WriteUninstaller "$INSTDIR\${UNINSTALLER_NAME}"
 
-    ; ── Registry: Add/Remove Programs entry ──────────────────────────────────
+    ; Registry: Add/Remove Programs entry
     WriteRegStr   HKLM "${REG_KEY}" "DisplayName"      "${PRODUCT_NAME} ${PRODUCT_VERSION}"
     WriteRegStr   HKLM "${REG_KEY}" "DisplayVersion"   "${PRODUCT_VERSION}"
     WriteRegStr   HKLM "${REG_KEY}" "Publisher"        "${PRODUCT_PUBLISHER}"
@@ -153,35 +153,35 @@ Section "HydraCast (required)" SecMain
     WriteRegDWORD HKLM "${REG_KEY}" "NoModify"         1
     WriteRegDWORD HKLM "${REG_KEY}" "NoRepair"         1
 
-    ; Estimate installed size (in KB) — update if version changes
+    ; Estimate installed size (in KB) - update if version changes
     WriteRegDWORD HKLM "${REG_KEY}" "EstimatedSize"    950000
 
-    ; ── Start Menu shortcuts ──────────────────────────────────────────────────
+    ; Start Menu shortcuts
     CreateDirectory "$SMPROGRAMS\${PRODUCT_NAME}"
 
     CreateShortcut "$SMPROGRAMS\${PRODUCT_NAME}\HydraCast (TUI).lnk" \
         "$INSTDIR\${PRODUCT_EXE}" "" \
         "$INSTDIR\_internal\resources\HydraCast.ico" 0 \
-        SW_SHOWNORMAL "" "HydraCast TUI — interactive console mode"
+        SW_SHOWNORMAL "" "HydraCast TUI - interactive console mode"
 
     CreateShortcut "$SMPROGRAMS\${PRODUCT_NAME}\HydraCast (Background).lnk" \
         "$INSTDIR\${PRODUCT_BG_EXE}" "" \
         "$INSTDIR\_internal\resources\HydraCast.ico" 0 \
-        SW_SHOWNORMAL "" "HydraCast — background / system tray mode"
+        SW_SHOWNORMAL "" "HydraCast - background / system tray mode"
 
     CreateShortcut "$SMPROGRAMS\${PRODUCT_NAME}\Uninstall HydraCast.lnk" \
         "$INSTDIR\${UNINSTALLER_NAME}" "" \
         "$INSTDIR\${UNINSTALLER_NAME}" 0
 
-    ; ── Desktop shortcut (optional) ───────────────────────────────────────────
+    ; Desktop shortcut (optional)
     ${If} $DoDesktop = ${BST_CHECKED}
         CreateShortcut "$DESKTOP\HydraCast.lnk" \
             "$INSTDIR\${PRODUCT_BG_EXE}" "" \
             "$INSTDIR\_internal\resources\HydraCast.ico" 0 \
-            SW_SHOWNORMAL "" "HydraCast — background / system tray mode"
+            SW_SHOWNORMAL "" "HydraCast - background / system tray mode"
     ${EndIf}
 
-    ; ── Startup registry entry (optional) ────────────────────────────────────
+    ; Startup registry entry (optional)
     ${If} $DoStartup = ${BST_CHECKED}
         WriteRegStr HKLM "${STARTUP_REG_KEY}" "${PRODUCT_NAME}" \
             '"$INSTDIR\${PRODUCT_BG_EXE}"'
@@ -191,7 +191,7 @@ Section "HydraCast (required)" SecMain
 
 SectionEnd
 
-; ── Uninstaller ───────────────────────────────────────────────────────────────
+; -- Uninstaller --------------------------------------------------------------
 Section "Uninstall"
 
     ; Kill running processes gracefully before removing files
@@ -214,14 +214,14 @@ Click NO to delete everything." \
 
     KeepUserData:
 
-    ; Remove installed program files (but not the user-data folders above
-    ; if the user chose to keep them — they may still exist, RMDir /r is safe)
+    ; Remove installed program files (but not user-data folders above
+    ; if the user chose to keep them)
     RMDir /r "$INSTDIR\_internal"
     Delete   "$INSTDIR\${PRODUCT_EXE}"
     Delete   "$INSTDIR\${PRODUCT_BG_EXE}"
     Delete   "$INSTDIR\${UNINSTALLER_NAME}"
 
-    ; Remove bin\ but not user-added binaries — just nuke the whole dir
+    ; Remove bin\ but not user-added binaries
     RMDir /r "$INSTDIR\bin"
 
     ; Try to remove install dir itself (succeeds only if empty)
