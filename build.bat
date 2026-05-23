@@ -36,20 +36,39 @@ if "!CUR_HASH!" == "!PREV_HASH!" (
         echo [HydraCast] ERROR: pip install failed.
         pause & exit /b 1
     )
-    REM Remove Google Auth if pulled in transitively -- not needed for standalone build.
     pip uninstall -y google-auth google-auth-oauthlib google-api-python-client httplib2 uritemplate 2>nul
     echo !CUR_HASH!>"%REQ_HASH_FILE%"
 )
 
-REM ── PyInstaller build ─────────────────────────────────────────────────────
-echo [HydraCast] Building EXE ...
+REM ── Tray dependencies (pystray + Pillow) ─────────────────────────────────
+echo [HydraCast] Ensuring tray dependencies (pystray, Pillow) ...
+pip install pystray Pillow -q
+if errorlevel 1 (
+    echo [HydraCast] WARNING: pystray/Pillow install failed -- tray icon will be disabled.
+)
+
+REM ── Build hydracast.exe (console / TUI) ──────────────────────────────────
+echo.
+echo [HydraCast] Building hydracast.exe (TUI) ...
 pyinstaller hydracast.spec --clean --noconfirm
 if errorlevel 1 (
-    echo [HydraCast] ERROR: PyInstaller failed.
+    echo [HydraCast] ERROR: hydracast.spec build failed.
+    pause & exit /b 1
+)
+
+REM ── Build hydracast_bg.exe (no console / tray) ───────────────────────────
+echo.
+echo [HydraCast] Building hydracast_bg.exe (background + tray) ...
+pyinstaller hydracast_bg.spec --noconfirm
+if errorlevel 1 (
+    echo [HydraCast] ERROR: hydracast_bg.spec build failed.
     pause & exit /b 1
 )
 
 echo.
-echo [HydraCast] Done!  Output: dist\HydraCast\hydracast.exe
-echo [HydraCast] Copy your bin\ folder (mediamtx.exe + bin\bin\ff*.exe) into dist\HydraCast\bin\
+echo [HydraCast] Done!
+echo   TUI mode : dist\HydraCast\hydracast.exe
+echo   BG  mode : dist\HydraCast\hydracast_bg.exe  (system tray)
+echo.
+echo [HydraCast] Copy your bin\ folder into dist\HydraCast\bin\ if not already there.
 pause
