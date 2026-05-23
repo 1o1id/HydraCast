@@ -33,6 +33,12 @@ Robustness fixes vs original
   9. Tray tooltip / menu    — shows version and port once worker is ready.
  10. Clean COLLECT in spec  — spec now uses collect_submodules for pystray
                              so _win32 backend is never missing.
+ 11. signal.signal patch    — Python forbids signal.signal() on non-main
+                             threads (ValueError).  We monkey-patch the
+                             stdlib signal module to a no-op inside the
+                             worker thread so hydracast.main() can run
+                             without modification.  The main thread still
+                             owns real signal handling via the tray quit.
 """
 import logging
 import os
@@ -134,6 +140,36 @@ def _show_error_box(title: str, message: str) -> None:
         pass   # non-Windows or ctypes missing — already logged
 
 
+# ── signal.signal patch ───────────────────────────────────────────────────────
+# Python raises ValueError("signal only works in main thread") when
+# signal.signal() is called from any non-main thread.  hydracast.main()
+# always calls signal.signal(SIGINT, ...) and signal.signal(SIGTERM, ...).
+# Since the worker runs in a daemon thread we neutralise the stdlib function
+# for the duration of the call and restore it afterwards.
+#
+# The main thread (tray) still has real signal handling via icon.stop() /
+# shutdown_event, so nothing is lost.
+
+import signal as _signal_mod
+
+_REAL_SIGNAL = _signal_mod.signal   # save original
+
+
+def _noop_signal(signum, handler):  # noqa: ANN001
+    """Drop-in replacement for signal.signal that does nothing."""
+    log.debug("signal.signal(%s, ...) suppressed in worker thread.", signum)
+
+
+def _patch_signal_for_thread() -> None:
+    """Replace signal.signal with a no-op (call from worker thread only)."""
+    _signal_mod.signal = _noop_signal
+
+
+def _unpatch_signal() -> None:
+    """Restore the real signal.signal (call after worker is done)."""
+    _signal_mod.signal = _REAL_SIGNAL
+
+
 # ── HydraCast worker ──────────────────────────────────────────────────────────
 class _WorkerState:
     """Shared state between the tray (main thread) and the worker thread."""
@@ -150,8 +186,13 @@ def _run_hydracast_once(state: _WorkerState) -> bool:
     Run the HydraCast core once.  Returns True if it should be restarted,
     False if shutdown was requested or a fatal/licence error occurred.
     """
+    # ── Neutralise signal.signal for this thread ──────────────────────────────
+    # Python only allows signal.signal() on the main thread.  hydracast.main()
+    # always calls it, so we swap it with a no-op for the duration of this call.
+    # _unpatch_signal() is called in the finally block regardless of outcome.
+    _patch_signal_for_thread()
     try:
-        # ── Suppress the TUI: replace run_tui_loop with an Event.wait() ──────
+        # ── Suppress the TUI ─────────────────────────────────────────────────
         import hc.tui as _tui_mod
 
         def _headless_tui_loop(**kw):
@@ -161,16 +202,8 @@ def _run_hydracast_once(state: _WorkerState) -> bool:
 
         _tui_mod.run_tui_loop = _headless_tui_loop
 
-        # ── Read port before main() overwrites it ────────────────────────────
-        # main() calls set_web_port(args.web_port) early; we grab the value
-        # afterwards by importing get_web_port inside this thread where the
-        # constants module is already initialised.
-
-        # Signal readiness *before* blocking in the TUI replacement so the
-        # tray can show the Open Web UI menu item immediately.
-        # We hook into the WebServer.start() path instead.
-        import hc.web as _web_mod
-        _orig_web_start = None
+        # ── Hook WebServer.start() to signal "ready" to the tray ─────────────
+        from hc.web import WebServer as _WS
 
         class _ReadyHook:
             """Patches WebServer.start() to fire the ready event once."""
@@ -188,16 +221,15 @@ def _run_hydracast_once(state: _WorkerState) -> bool:
                 state.ready_event.set()
                 return result
 
-        # Patch WebServer class so any instance's start() triggers the hook.
-        from hc.web import WebServer as _WS
         _real_start = _WS.start
         _WS.start = _ReadyHook(_real_start)
 
-        import hydracast as _hc
-        _hc.main()
-
-        # Restore the patched method for any potential restart.
-        _WS.start = _real_start
+        try:
+            import hydracast as _hc
+            _hc.main()
+        finally:
+            # Restore patched method whether main() succeeded or raised.
+            _WS.start = _real_start
 
     except SystemExit as exc:
         code = exc.code
@@ -206,14 +238,24 @@ def _run_hydracast_once(state: _WorkerState) -> bool:
             # Clean exit (e.g. user quit from web UI).
             state.fatal = True
             return False
-        # Non-zero: might be licence check or fatal startup error.
+        # Non-zero exit: licence failure or fatal startup error — don't retry.
         log.error("HydraCast fatal exit (code=%s) — will not restart.", code)
+        state.fatal = True
+        return False
+
+    except ValueError as exc:
+        # Should not happen now that signal.signal is patched, but guard anyway.
+        log.exception("Worker ValueError: %s", exc)
         state.fatal = True
         return False
 
     except Exception as exc:
         log.exception("HydraCast worker raised unhandled exception: %s", exc)
-        return not state.shutdown_event.is_set()   # restart unless shutting down
+        # Retry unless a shutdown was already requested.
+        return not state.shutdown_event.is_set()
+
+    finally:
+        _unpatch_signal()
 
     return False   # main() returned normally — treat as clean exit
 
