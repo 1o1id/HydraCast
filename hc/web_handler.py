@@ -1430,7 +1430,7 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
             self._json({"ok": True, "msg": "Restarting all streams"})
 
         elif action == "restart_process":
-            import os as _os, sys as _sys, threading as _thr
+            import os as _os, threading as _thr
             if mgr is not None:
                 for st in mgr.states:
                     try:
@@ -1440,11 +1440,9 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
             self._json({"ok": True, "msg": "Restarting process…"})
             def _do_exec():
                 import time as _t
-                _t.sleep(0.6)
-                try:
-                    _os.execv(_sys.executable, [_sys.executable] + _sys.argv)
-                except Exception as exc:
-                    log.error("restart_process: execv failed: %s", exc)
+                _t.sleep(0.8)
+                log.info("restart_process: calling os._exit(0) — Guardian will relaunch.")
+                _os._exit(0)
             _thr.Thread(target=_do_exec, daemon=False,
                         name="hc-restart-process").start()
 
@@ -2335,18 +2333,27 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
         else:
             self._json({"ok": False, "msg": f"Unknown action: {action}"}, 404)
 
-    # ── Hard factory reset ───────────────────────────────────────────────────
     def _handle_reset(self, data: Dict[str, Any]) -> None:
         """
         POST /api/reset  { "confirm": true }
 
         1. Stop every running stream.
-        2. Delete every file inside config/ — wipes streams, events,
-           mail config, app settings, resume positions, media roots,
-           holiday caches, everything.
+        2. Delete every file inside config/.
         3. Clear all in-memory state.
         4. Send HTTP response so the browser gets a reply.
-        5. os.execv — replace this process with a fresh copy of itself.
+        5. os._exit(0) — kills the process so the Guardian detects the exit
+           and relaunches hydracast_bg.exe with the original arguments.
+
+        Why os._exit(0) and not Popen/execv:
+        ──────────────────────────────────────
+        This method runs on a web-handler thread inside hydracast_bg.exe.
+        sys.exit(0) raises SystemExit which hydracast_bg._run_hydracast_once()
+        catches — the outer process stays alive and the Guardian never fires.
+        subprocess.Popen([sys.executable]+sys.argv) on a frozen build doubles
+        the exe path ("hydracast_bg.exe hydracast_bg.exe …") and fails
+        silently.  os._exit(0) kills the whole process instantly; the Guardian
+        detects the exit-code-0, treats it as an intentional restart, and
+        relaunches the correct binary.
         """
         import os as _os, sys as _sys, threading as _thr
 
@@ -2360,10 +2367,6 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
         errors:  List[str] = []
 
         # ── 1. Force-stop all running streams ────────────────────────────────
-        # worker.kill() sends SIGKILL to FFmpeg/MediaMTX immediately so they
-        # release their ports before the wipe and execv().  mgr.stop() alone
-        # is async (daemon thread) and returns before the processes are dead,
-        # which can leave orphaned subprocesses holding ports after restart.
         import time as _time
         if mgr is not None:
             for st in list(getattr(mgr, "states", [])):
@@ -2379,9 +2382,6 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                 except Exception as exc:
                     errors.append(f"stop {st.config.name}: {exc}")
 
-        # Brief pause so the OS reclaims port bindings before we wipe and
-        # execv().  Without this the fresh process may fail to bind ports
-        # that orphaned subprocesses still hold.
         _time.sleep(0.4)
 
         # ── 2. Wipe every file AND subdirectory in config/ ───────────────────
@@ -2432,7 +2432,7 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                  ", ".join(stopped) or "none",
                  f" errors: {'; '.join(errors)}" if errors else "")
 
-        # ── 4. Respond before execv kills the socket ──────────────────────────
+        # ── 4. Respond before os._exit kills the socket ───────────────────────
         self._json({
             "ok":      True,
             "msg":     "Reset complete — restarting server…",
@@ -2441,14 +2441,12 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
             "errors":  errors,
         })
 
-        # ── 5. Restart the process after a short flush delay ──────────────────
+        # ── 5. Kill process — Guardian detects exit and relaunches ────────────
         def _do_reset_restart():
             import time as _t
-            _t.sleep(0.6)
-            try:
-                _os.execv(_sys.executable, [_sys.executable] + _sys.argv)
-            except Exception as exc:
-                log.error("reset: execv failed: %s", exc)
+            _t.sleep(0.8)
+            log.info("reset: calling os._exit(0) — Guardian will relaunch.")
+            _os._exit(0)
 
         _thr.Thread(target=_do_reset_restart, daemon=False,
                     name="hc-factory-reset").start()
