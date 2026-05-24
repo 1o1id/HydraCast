@@ -8,25 +8,40 @@ Called once at application startup (from hydracast.py) via::
 
 Priority order
 ──────────────
-  1. Existing valid cert in  <install_dir>/ssl/
+  1. Existing valid cert in the legacy install-dir locations
+       (<install_dir>/ssl/  or  <install_dir>/_internal/certifi/)
+       • Checked first so upgrades don't abandon already-generated certs.
        • Both cert.pem and key.pem must exist.
        • Cert must not expire within the next 30 days.
        → Returned as-is; no generation occurs.
 
-  2. Fresh self-signed cert via the ``cryptography`` library
+  2. Existing valid cert in the user-writable CONFIG_DIR locations
+       (CONFIG_DIR()/ssl/  or  CONFIG_DIR()/certifi/)
+       • Same validity checks as above.
+       → Returned as-is; no generation occurs.
+
+  3. Fresh self-signed cert via the ``cryptography`` library
        • 2048-bit RSA / SHA-256 / 3650-day validity.
        • SAN: localhost, hydracast.local, 127.0.0.1.
-       → Written to <install_dir>/ssl/.
+       → Written to CONFIG_DIR()/ssl/.
 
-  3. Bundled fallback cert (pre-generated, embedded in this module)
-       → Written to <install_dir>/ssl/ if possible,
-         otherwise to  <install_dir>/_internal/certifi/
-         (a separate bundled-cert folder; always writable when shipped).
+  4. Bundled fallback cert (pre-generated, embedded in this module)
+       → Written to CONFIG_DIR()/ssl/ if possible,
+         otherwise to  CONFIG_DIR()/certifi/.
 
-Location fallback
-─────────────────
-  Primary   : <install_dir>/ssl/cert.pem   +  ssl/key.pem
-  Secondary : <install_dir>/_internal/certifi/cert.pem  +  key.pem
+Location strategy (v6.2+)
+──────────────────────────
+  All cert *writing* now targets CONFIG_DIR() (e.g. %APPDATA%\HydraCast)
+  rather than the install directory.  This fixes [WinError 5] Access is
+  denied when HydraCast is installed under C:\Program Files\ and launched
+  without administrator privileges — the same approach already used by
+  every other writable path in constants.py.
+
+  Legacy install-dir paths are still *read* (steps 1) so that users who
+  already have a valid cert there don't lose it on upgrade.
+
+  Primary write target  : CONFIG_DIR()/ssl/cert.pem  +  key.pem
+  Fallback write target : CONFIG_DIR()/certifi/cert.pem  +  key.pem
 
 Install-dir resolution
 ──────────────────────
@@ -137,19 +152,51 @@ def _install_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+# ---------------------------------------------------------------------------
+# Writable cert directories — rooted under CONFIG_DIR(), not install_dir().
+#
+# The install directory (e.g. C:\Program Files\HydraCast) is UAC-protected
+# on Windows.  Writing there without elevation raises [WinError 5] Access
+# is denied.  CONFIG_DIR() resolves to a per-user writable location
+# (%APPDATA%\HydraCast on Windows, ~/.config/hydracast on Linux/macOS)
+# and is the same strategy already used for every other writable path in
+# constants.py.
+# ---------------------------------------------------------------------------
+
 def _ssl_dir() -> Path:
-    """Primary certificate directory: <install_dir>/ssl/"""
-    return _install_dir() / "ssl"
+    """
+    Primary cert directory for *writing*: CONFIG_DIR()/ssl/
+
+    Always user-writable; avoids [WinError 5] under Program Files.
+    """
+    from hc.constants import CONFIG_DIR
+    return CONFIG_DIR() / "ssl"
 
 
 def _certifi_dir() -> Path:
     """
-    Fallback certificate directory: <install_dir>/_internal/certifi/
+    Fallback cert directory for *writing*: CONFIG_DIR()/certifi/
 
-    This is a separate folder shipped alongside the .exe as a dedicated
-    cert fallback location.  It is always created at runtime if absent,
-    so it is reliably writable on any standard installation.
+    Used only when _ssl_dir() itself cannot be written (should be rare
+    since both share the same CONFIG_DIR parent).
     """
+    from hc.constants import CONFIG_DIR
+    return CONFIG_DIR() / "certifi"
+
+
+# ---------------------------------------------------------------------------
+# Legacy read-only locations — the old install-dir paths from v6.1 and
+# earlier.  We never write here (they're protected under Program Files),
+# but we still *read* them so existing certs survive an upgrade.
+# ---------------------------------------------------------------------------
+
+def _legacy_ssl_dir() -> Path:
+    """Legacy primary: <install_dir>/ssl/  (read-only check only)."""
+    return _install_dir() / "ssl"
+
+
+def _legacy_certifi_dir() -> Path:
+    """Legacy fallback: <install_dir>/_internal/certifi/  (read-only check only)."""
     return _install_dir() / "_internal" / "certifi"
 
 
@@ -280,6 +327,19 @@ def ensure_ssl(console=None) -> Tuple[Path, Path]:
     """
     Guarantee a valid TLS certificate pair exists and return their paths.
 
+    Search order
+    ────────────
+    1. Legacy install-dir locations (read-only; checked so upgrades keep
+       existing certs without regenerating):
+         <install_dir>/ssl/               ← old primary
+         <install_dir>/_internal/certifi/ ← old fallback
+    2. New CONFIG_DIR locations (user-writable; used on first run or after
+       the legacy certs expire):
+         CONFIG_DIR()/ssl/
+         CONFIG_DIR()/certifi/
+    3. Generate a fresh self-signed cert into CONFIG_DIR()/ssl/.
+    4. Last resort: write the bundled fallback cert to CONFIG_DIR()/certifi/.
+
     Parameters
     ----------
     console : rich.console.Console, optional
@@ -292,7 +352,7 @@ def ensure_ssl(console=None) -> Tuple[Path, Path]:
     Raises
     ------
     RuntimeError
-        When neither ssl/ nor _internal/certifi/ can be written to.
+        When no location can be written to.
     """
     global CERT_PATH, KEY_PATH
 
@@ -304,23 +364,42 @@ def ensure_ssl(console=None) -> Tuple[Path, Path]:
             except Exception:
                 pass
 
-    ssl_cert = _ssl_dir()      / "cert.pem"
-    ssl_key  = _ssl_dir()      / "key.pem"
-    fb_cert  = _certifi_dir()  / "cert.pem"
-    fb_key   = _certifi_dir()  / "key.pem"
+    # ── 1. Legacy install-dir certs (read-only upgrade path) ──────────────────
+    # These paths may sit inside C:\Program Files\ — never write to them,
+    # but honour any valid cert already there so users don't lose a working
+    # cert after an upgrade.
+    for legacy_dir, label in (
+        (_legacy_ssl_dir(),     "ssl/"),
+        (_legacy_certifi_dir(), "_internal/certifi/"),
+    ):
+        lc = legacy_dir / "cert.pem"
+        lk = legacy_dir / "key.pem"
+        if _cert_is_valid(lc, lk):
+            _msg(
+                f"SSL  : Existing certificate reused from legacy location "
+                f"({label}) → {lc.parent}",
+                "dim yellow",
+            )
+            CERT_PATH, KEY_PATH = lc, lk
+            return lc, lk
 
-    # ── 1. Existing valid cert ────────────────────────────────────────────────────────────
+    # ── 2. New CONFIG_DIR certs (user-writable; normal steady-state) ──────────
+    ssl_cert = _ssl_dir()     / "cert.pem"
+    ssl_key  = _ssl_dir()     / "key.pem"
+    fb_cert  = _certifi_dir() / "cert.pem"
+    fb_key   = _certifi_dir() / "key.pem"
+
     if _cert_is_valid(ssl_cert, ssl_key):
         _msg(f"SSL  : Existing certificate reused  (→ {ssl_cert.parent})", "dim")
         CERT_PATH, KEY_PATH = ssl_cert, ssl_key
         return ssl_cert, ssl_key
 
     if _cert_is_valid(fb_cert, fb_key):
-        _msg(f"SSL  : Existing certificate reused from _internal/certifi/", "dim yellow")
+        _msg("SSL  : Existing certificate reused from certifi/", "dim yellow")
         CERT_PATH, KEY_PATH = fb_cert, fb_key
         return fb_cert, fb_key
 
-    # ── 2. Write to ssl/ (generate fresh; fall back to bundled if needed) ────
+    # ── 3. Generate a fresh cert into CONFIG_DIR()/ssl/ ───────────────────────
     _msg("SSL  : Generating self-signed certificate …", "dim cyan")
     try:
         cert_path, key_path = _try_write_to(_ssl_dir(), generate=True)
@@ -328,19 +407,16 @@ def ensure_ssl(console=None) -> Tuple[Path, Path]:
         CERT_PATH, KEY_PATH = cert_path, key_path
         return cert_path, key_path
     except Exception as exc:
-        log.error("[SSL] ssl/ not writable (%s) — trying _internal/certifi/ …", exc)
+        log.error("[SSL] CONFIG_DIR/ssl/ not writable (%s) — trying certifi/ …", exc)
         _msg(
-            f"SSL  : ssl/ not writable ({exc}) — falling back to _internal/certifi/",
+            f"SSL  : ssl/ not writable ({exc}) — falling back to certifi/",
             "yellow",
         )
 
-    # ── 3. Last resort: _internal/certifi/ with bundled cert ─────────
+    # ── 4. Last resort: bundled cert into CONFIG_DIR()/certifi/ ───────────────
     try:
         cert_path, key_path = _try_write_to(_certifi_dir(), generate=False)
-        _msg(
-            f"SSL  : Fallback certificate written to _internal/certifi/",
-            "yellow",
-        )
+        _msg("SSL  : Fallback certificate written to certifi/", "yellow")
         CERT_PATH, KEY_PATH = cert_path, key_path
         return cert_path, key_path
     except Exception as exc:
@@ -350,6 +426,6 @@ def ensure_ssl(console=None) -> Tuple[Path, Path]:
             f"  Primary  : {_ssl_dir()}\n"
             f"  Fallback : {_certifi_dir()}\n"
             f"  Error    : {exc}\n\n"
-            f"  Fix: create the ssl/ folder next to hydracast.exe,\n"
-            f"       ensure it is writable, then restart HydraCast."
+            f"  Fix: ensure the HydraCast data folder is writable, then restart.\n"
+            f"  Data folder is typically: {_ssl_dir().parent}"
         ) from exc
