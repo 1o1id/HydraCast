@@ -1441,8 +1441,8 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
             def _do_exec():
                 import time as _t
                 _t.sleep(0.8)
-                log.info("restart_process: calling os._exit(0) — Guardian will relaunch.")
-                _os._exit(0)
+                log.info("restart_process: calling os._exit(1) — Guardian will relaunch.")
+                _os._exit(1)
             _thr.Thread(target=_do_exec, daemon=False,
                         name="hc-restart-process").start()
 
@@ -2341,17 +2341,17 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
         2. Delete every file inside config/.
         3. Clear all in-memory state.
         4. Send HTTP response so the browser gets a reply.
-        5. os._exit(0) — kills the process so the Guardian detects the exit
+        5. os._exit(1) — kills the process so the Guardian detects the exit
            and relaunches hydracast_bg.exe with the original arguments.
 
-        Why os._exit(0) and not Popen/execv:
+        Why os._exit(1) and not Popen/execv:
         ──────────────────────────────────────
         This method runs on a web-handler thread inside hydracast_bg.exe.
         sys.exit(0) raises SystemExit which hydracast_bg._run_hydracast_once()
         catches — the outer process stays alive and the Guardian never fires.
         subprocess.Popen([sys.executable]+sys.argv) on a frozen build doubles
         the exe path ("hydracast_bg.exe hydracast_bg.exe …") and fails
-        silently.  os._exit(0) kills the whole process instantly; the Guardian
+        silently.  os._exit(1) kills the whole process instantly; the Guardian
         detects the exit-code-0, treats it as an intentional restart, and
         relaunches the correct binary.
         """
@@ -2445,8 +2445,8 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
         def _do_reset_restart():
             import time as _t
             _t.sleep(0.8)
-            log.info("reset: calling os._exit(0) — Guardian will relaunch.")
-            _os._exit(0)
+            log.info("reset: calling os._exit(1) — Guardian will relaunch.")
+            _os._exit(1)
 
         _thr.Thread(target=_do_reset_restart, daemon=False,
                     name="hc-factory-reset").start()
