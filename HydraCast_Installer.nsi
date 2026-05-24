@@ -181,12 +181,17 @@ Section "HydraCast (required)" SecMain
             SW_SHOWNORMAL "" "HydraCast - background / system tray mode"
     ${EndIf}
 
-    ; Startup registry entry (optional)
+    ; Startup registry entry — written to HKLM (machine-wide) AND HKCU (user).
+    ; HKCU survives factory resets and reinstalls without needing admin rights.
+    ; The tray icon menu manages HKCU at runtime after install.
     ${If} $DoStartup = ${BST_CHECKED}
         WriteRegStr HKLM "${STARTUP_REG_KEY}" "${PRODUCT_NAME}" \
             '"$INSTDIR\${PRODUCT_BG_EXE}"'
+        WriteRegStr HKCU "${STARTUP_REG_KEY}" "${PRODUCT_NAME}" \
+            '"$INSTDIR\${PRODUCT_BG_EXE}"'
     ${Else}
         DeleteRegValue HKLM "${STARTUP_REG_KEY}" "${PRODUCT_NAME}"
+        DeleteRegValue HKCU "${STARTUP_REG_KEY}" "${PRODUCT_NAME}"
     ${EndIf}
 
 SectionEnd
@@ -232,7 +237,8 @@ Click NO to delete everything." \
     Delete    "$DESKTOP\HydraCast.lnk"
 
     ; Remove registry entries
-    DeleteRegKey HKLM "${REG_KEY}"
+    DeleteRegKey   HKLM "${REG_KEY}"
     DeleteRegValue HKLM "${STARTUP_REG_KEY}" "${PRODUCT_NAME}"
+    DeleteRegValue HKCU "${STARTUP_REG_KEY}" "${PRODUCT_NAME}"
 
 SectionEnd
