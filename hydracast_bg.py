@@ -342,6 +342,58 @@ def _run_hydracast_with_restarts(state: _WorkerState) -> None:
     log.info("Worker thread exiting.")
 
 
+# ── Startup registry helpers (HKCU — no admin needed) ────────────────────────
+
+def _startup_reg_key() -> str:
+    return r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+
+def _get_startup_enabled() -> bool:
+    """Return True when the HKCU Run entry for HydraCast exists."""
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER, _startup_reg_key(), 0, winreg.KEY_READ
+        )
+        winreg.QueryValueEx(key, "HydraCast")
+        winreg.CloseKey(key)
+        return True
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return False
+
+
+def _set_startup_enabled(enabled: bool) -> None:
+    """Write or remove the HKCU Run entry for HydraCast."""
+    try:
+        import winreg
+        # Determine the bg exe path
+        if getattr(sys, "frozen", False):
+            exe = Path(sys.executable)
+            bg  = exe.with_name("hydracast_bg.exe")
+            target = str(bg) if bg.exists() else str(exe)
+        else:
+            target = str(Path(__file__).resolve())
+
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER, _startup_reg_key(),
+            0, winreg.KEY_SET_VALUE,
+        )
+        if enabled:
+            winreg.SetValueEx(key, "HydraCast", 0, winreg.REG_SZ, f'"{target}"')
+            log.info("startup: HKCU Run entry added → %s", target)
+        else:
+            try:
+                winreg.DeleteValue(key, "HydraCast")
+                log.info("startup: HKCU Run entry removed")
+            except FileNotFoundError:
+                pass
+        winreg.CloseKey(key)
+    except Exception as exc:
+        log.warning("startup: could not update registry — %s", exc)
+
+
 # ── Tray (main thread) ────────────────────────────────────────────────────────
 
 def _build_and_run_tray(state: _WorkerState) -> None:
@@ -390,6 +442,30 @@ def _build_and_run_tray(state: _WorkerState) -> None:
         state.shutdown_event.set()
         icon.stop()
 
+    def _toggle_startup(icon, item):
+        """Toggle the Windows startup entry and refresh the tray menu."""
+        current = _get_startup_enabled()
+        _set_startup_enabled(not current)
+        # Rebuild the menu so the label flips immediately
+        icon.menu = _build_menu()
+        log.info("startup toggled: now %s", "ON" if not current else "OFF")
+
+    def _build_menu():
+        startup_on = _get_startup_enabled()
+        startup_label = "✔  Run at Windows startup" if startup_on else "     Run at Windows startup"
+        return pystray.Menu(
+            Item(f"Open Web UI  (https://{_ip}:{port})", _open_web, default=True),
+            pystray.Menu.SEPARATOR,
+            Item("Restart HydraCast",   _restart_worker),
+            pystray.Menu.SEPARATOR,
+            Item(startup_label,         _toggle_startup),
+            pystray.Menu.SEPARATOR,
+            Item("Open App Log",        _open_log),
+            Item("Open Guardian Log",   _open_guardian_log),
+            pystray.Menu.SEPARATOR,
+            Item("Quit HydraCast",      _quit),
+        )
+
     def _open_log(icon, item):
         appdata = os.environ.get("APPDATA")
         log_path = None
@@ -425,20 +501,10 @@ def _build_and_run_tray(state: _WorkerState) -> None:
         _ip = "localhost"
 
     image = _load_image()
-    menu = pystray.Menu(
-        Item(f"Open Web UI  (https://{_ip}:{port})", _open_web, default=True),
-        pystray.Menu.SEPARATOR,
-        Item("Restart HydraCast", _restart_worker),
-        pystray.Menu.SEPARATOR,
-        Item("Open App Log",      _open_log),
-        Item("Open Guardian Log", _open_guardian_log),
-        pystray.Menu.SEPARATOR,
-        Item("Quit HydraCast",    _quit),
-    )
     icon = pystray.Icon(
         "HydraCast", image,
         f"HydraCast  https://{_ip}:{port}  [Guardian Active]",
-        menu,
+        _build_menu(),
     )
 
     def _watch_worker():
