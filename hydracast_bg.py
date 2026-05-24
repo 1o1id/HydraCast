@@ -382,7 +382,7 @@ def _set_startup_enabled(enabled: bool) -> None:
         )
         if enabled:
             winreg.SetValueEx(key, "HydraCast", 0, winreg.REG_SZ, f'"{target}"')
-            log.info("startup: HKCU Run entry added → %s", target)
+            log.info("startup: HKCU Run entry added -> %s", target)
         else:
             try:
                 winreg.DeleteValue(key, "HydraCast")
