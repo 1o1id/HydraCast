@@ -515,6 +515,26 @@ def main() -> None:
         _log_dir = (Path(appdata) / "HydraCast" / "logs") if appdata else (_here / "logs")
     _log_dir.mkdir(parents=True, exist_ok=True)
 
+    # ── Launch the Guardian process (supervises THIS process) ─────────────────
+    # The guardian is a separate detached process that monitors hydracast_bg
+    # via heartbeat UDP pings.  If this process exits with a non-zero code
+    # (crash, factory reset, restart request) the guardian relaunches it.
+    # If a guardian is already running, launch_guardian() is a no-op.
+    try:
+        from hc.watchdog import launch_guardian
+        if getattr(sys, "frozen", False):
+            _target_cmd = sys.executable
+        else:
+            _target_cmd = f"{sys.executable} {Path(__file__).resolve()}"
+        _guardian_proc = launch_guardian(_target_cmd, _log_dir)
+        if _guardian_proc is not None:
+            log.info("Guardian launched (PID %d) — supervising: %s",
+                     _guardian_proc.pid, _target_cmd)
+        else:
+            log.info("Guardian already running or skipped.")
+    except Exception as _exc:
+        log.warning("Could not launch guardian: %s — running without supervisor.", _exc)
+
     # ── Start heartbeat sender (pings the guardian to prove we're alive) ──────
     from hc.watchdog import HeartbeatSender
     _heartbeat = HeartbeatSender()
