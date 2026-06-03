@@ -1054,7 +1054,7 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
 
     def _get_check_port(self, qs: Dict[str, Any]) -> None:
         """
-        GET /api/check_port?port=8555
+        GET /api/check_port?port=30121
 
         Check whether a proposed RTSP base port is safe to use.
 
@@ -1070,14 +1070,14 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
         Returns JSON:
           {
             "ok": true/false,      // overall safe to use
-            "port": 8555,
-            "hls_port": 8556,
-            "rtp_port": 8558,
-            "rtcp_port": 8559,
+            "port": 30121,
+            "hls_port": 30122,
+            "rtp_port": 30124,
+            "rtcp_port": 30125,
             "odd_ok": true,        // port is odd
             "ports": {             // per-port status
-              "8555": {"free": true,  "process": null},
-              "8556": {"free": false, "process": "nginx (pid 1234)"},
+              "30121": {"free": true,  "process": null},
+              "30122": {"free": false, "process": "nginx (pid 1234)"},
               ...
             },
             "firewall": {
@@ -1301,7 +1301,7 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
 
     def _get_suggest_port(self, qs: Dict[str, Any]) -> None:
         """
-        GET /api/suggest_port?from=8555
+        GET /api/suggest_port?from=30121
 
         Scan odd ports starting from ``from`` (inclusive, must be odd;
         bumped +1 if even) and return the first port where all four
@@ -1309,17 +1309,17 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
 
         Returns JSON:
           {
-            "port": 8561,          // suggested free odd port (or null if none found)
+            "port": 30121,         // suggested free odd port (or null if none found)
             "searched": 50         // how many candidates were checked
           }
         """
         import socket as _socket
 
         try:
-            raw  = qs.get("from", ["8555"])[0].strip()
-            base = int(raw) if raw else 8555
+            raw  = qs.get("from", ["30121"])[0].strip()
+            base = int(raw) if raw else 30121
         except (ValueError, TypeError):
-            base = 8555
+            base = 30121
 
         # Clamp and make odd
         base = max(1025, min(base, 65520))
