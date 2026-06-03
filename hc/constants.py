@@ -21,6 +21,11 @@ v6.2 changes
   self-signed cert when ssl/cert.pem + ssl/key.pem are absent.
 • validate_port() utility used by both CLI and the TUI port-change prompt.
 
+v6.4 changes
+────────────
+• cameras.hcf path registered in set_base_dir() as CAMERAS_JSON.
+• CAMERAS_FILE() accessor added alongside STREAMS_JSON / EVENTS_FILE.
+
 v6.0 / v6.1 changes kept below.
 """
 from __future__ import annotations
@@ -105,6 +110,7 @@ def set_base_dir(script_path: Path) -> None:
     _dirs["SSL"]    = wb / "ssl"
     _dirs["STREAMS_JSON"] = wb / "config" / "streams.hcf"
     _dirs["EVENTS_JSON"]  = wb / "config" / "events.hcf"
+    _dirs["CAMERAS_JSON"] = wb / "config" / "cameras.hcf"
     # Legacy paths — migration helpers only
     _dirs["CSV"]        = wb / "streams.csv"
     _dirs["EVENTS_CSV"] = wb / "events.csv"
@@ -134,6 +140,7 @@ def SSL_CERT()       -> Path: return _require("SSL") / "cert.pem"
 def SSL_KEY()        -> Path: return _require("SSL") / "key.pem"
 def STREAMS_JSON()   -> Path: return _require("STREAMS_JSON")
 def EVENTS_FILE()    -> Path: return _require("EVENTS_JSON")
+def CAMERAS_FILE()   -> Path: return _require("CAMERAS_JSON")
 def CSV_FILE()       -> Path: return _require("CSV")
 def EVENTS_CSV()     -> Path: return _require("EVENTS_CSV")
 
