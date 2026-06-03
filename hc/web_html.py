@@ -3800,7 +3800,7 @@ function showNewStreamForm(){
             </i>
           </label>
           <div class="port-field-row">
-            <input id="new-port" type="number" value="8555" min="1025" max="65533" step="2"
+            <input id="new-port" type="number" value="30121" min="1025" max="65533" step="2"
               oninput="if(+this.value%2===0&&this.value)this.value=+this.value+1"
               title="Must be an ODD number. HLS will use this port + 1 (even).">
             <button type="button" id="suggest-btn-new-port"
@@ -3949,7 +3949,7 @@ async function suggestNextPort(inputId, resultId){
   // Always start 2 above the current value so the button advances to a
   // genuinely *next* free port instead of returning the same port when
   // the current one happens to be free already.
-  const cur = parseInt(inp.value||0)||8553;
+  const cur = parseInt(inp.value||0)||30119;
   const from = cur + 2;
   const suggestBtn = document.getElementById('suggest-btn-'+inputId);
   if(suggestBtn){
