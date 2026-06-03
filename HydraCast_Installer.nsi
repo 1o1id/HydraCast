@@ -32,7 +32,7 @@ SetCompressorDictSize 64          ; 64 MB dictionary - best ratio for large dirs
 
 ; -- Product metadata ---------------------------------------------------------
 !define PRODUCT_NAME        "HydraCast"
-!define PRODUCT_VERSION     "6.4.0"
+!define PRODUCT_VERSION     "6.5.0"
 !define PRODUCT_PUBLISHER   "rhshourav"
 !define PRODUCT_URL         "https://github.com/rhshourav/HydraCast"
 !define PRODUCT_EXE         "hydracast.exe"
@@ -199,10 +199,24 @@ SectionEnd
 ; -- Uninstaller --------------------------------------------------------------
 Section "Uninstall"
 
-    ; Kill running processes gracefully before removing files
-    ExecWait 'taskkill /F /IM "${PRODUCT_EXE}"'    $0
-    ExecWait 'taskkill /F /IM "${PRODUCT_BG_EXE}"' $0
-    Sleep 1000
+    ; Kill ALL HydraCast processes -- including the detached guardian --
+    ; before attempting to remove any files.
+    ExecWait 'taskkill /F /IM "${PRODUCT_EXE}"'         $0
+    ExecWait 'taskkill /F /IM "${PRODUCT_BG_EXE}"'      $0
+    ExecWait 'taskkill /F /IM "hydracast_guardian.exe"'  $0
+    Sleep 1500   ; give OS time to release file handles
+
+    ; Always remove guardian PID/lock files regardless of user-data choice.
+    ; These are internal runtime artefacts, not user data, and must be
+    ; cleaned up so a reinstall does not pick up a stale guardian PID.
+    Delete "$INSTDIR\logs\guardian.pid"
+    Delete "$INSTDIR\logs\guardian_self.pid"
+    Delete "$INSTDIR\logs\guardian.log"
+    Delete "$INSTDIR\logs\guardian.log.1"
+    Delete "$INSTDIR\logs\guardian.log.2"
+    Delete "$INSTDIR\logs\guardian.log.3"
+    Delete "$INSTDIR\logs\guardian.log.4"
+    Delete "$INSTDIR\logs\guardian.log.5"
 
     ; Ask whether to keep user data (config, logs, media)
     MessageBox MB_YESNO|MB_ICONQUESTION \
