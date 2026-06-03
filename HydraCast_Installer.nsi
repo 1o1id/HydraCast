@@ -206,7 +206,7 @@ Section "Uninstall"
     ; Kill ALL HydraCast-related processes before removing files.
     ; Order matters: kill child workers first, then supervisors.
     ; ffmpeg and mediamtx are spawned per-stream and must be killed
-    ; explicitly — they are NOT children of the main EXE on Windows.
+    ; explicitly - they are NOT children of the main EXE on Windows.
     ExecWait 'taskkill /F /IM "${FFMPEG_EXE}"'          $0
     ExecWait 'taskkill /F /IM "${FFPROBE_EXE}"'         $0
     ExecWait 'taskkill /F /IM "${MEDIAMTX_EXE}"'        $0
