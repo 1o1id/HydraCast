@@ -787,14 +787,54 @@ class StreamWorker:
                 # fewer items than the current index.
                 old_count = len(cfg.playlist)
                 cfg.playlist = scanned_items
-                if not self.state.playlist_order:
-                    # First start: build order fresh.
+
+                # ── Compliance mode: always pin to today's day-tagged file ──────
+                # On a restart the stale playlist_index points at whatever file
+                # was playing last session — which may be the wrong weekday file.
+                # select_compliance_file() picks the correct _today_ tagged file
+                # so we reset the index to match it, rather than preserving the
+                # old index and letting the stream cycle through wrong-day files.
+                if cfg.compliance_enabled:
+                    try:
+                        from hc.compliance import select_compliance_file
+                        comp_item, comp_err = select_compliance_file(
+                            cfg.playlist,
+                            folder_source=cfg.folder_source,
+                        )
+                        if comp_item is not None:
+                            try:
+                                comp_idx = cfg.playlist.index(comp_item)
+                            except ValueError:
+                                comp_idx = 0
+                            self.state.playlist_order = list(range(len(cfg.playlist)))
+                            self.state.playlist_index = comp_idx
+                            if comp_err:
+                                self.state.set_compliance_alert(comp_err)
+                            self._log(
+                                f"Compliance restart: pinned to today's file "
+                                f"'{comp_item.file_path.name}' (index {comp_idx})"
+                            )
+                        else:
+                            # Fallback: reset to 0 so we don't start mid-playlist
+                            self.state.playlist_index = 0
+                            self.state.playlist_order = list(range(len(cfg.playlist)))
+                            if comp_err:
+                                self.state.set_compliance_alert(comp_err)
+                    except Exception as _comp_exc:
+                        self._log(
+                            f"Compliance file selection on restart failed: {_comp_exc} "
+                            "— resetting to index 0",
+                            "WARN",
+                        )
+                        self.state.playlist_index = 0
+                        self.state.playlist_order = self._build_order()
+                elif not self.state.playlist_order:
+                    # First start (non-compliance): build order fresh.
                     self.state.playlist_index = 0
                     self.state.playlist_order = self._build_order()
                 else:
-                    # Rebuild order (handles shuffle + new file count).
+                    # Non-compliance restart: rebuild order and clamp index.
                     self.state.playlist_order = self._build_order()
-                    # Clamp index to valid range.
                     self.state.playlist_index = (
                         self.state.playlist_index % len(self.state.playlist_order)
                     )
