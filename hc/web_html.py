@@ -2435,8 +2435,11 @@ async function api(action,data){
 // ═══════════════════════════════════
 function downloadUrlsCsv(){
   const incFiles=document.getElementById('csv-files')?.checked?'1':'0';
+  // Use an absolute URL so the request always reaches the HydraCast
+  // web server regardless of any reverse-proxy or port mismatch.
+  const base=window.location.origin;
   const a=document.createElement('a');
-  a.href='/api/urls_csv?include_files='+incFiles;
+  a.href=base+'/api/urls_csv?include_files='+incFiles;
   a.download='';           // filename comes from Content-Disposition
   document.body.appendChild(a);
   a.click();
