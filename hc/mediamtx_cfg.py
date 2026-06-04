@@ -23,49 +23,7 @@ FIX (v6.5.1 — writeTimeout note):
     for a high-quality encode on a loaded host; reducing it would reintroduce
     the very problem it was raised to avoid.
 
-FIX (v6.3 — quality + HLS/RTSP sync):
-  • hlsSegmentDuration: 4s  — aligns with FFmpeg -force_key_frames every 4 s.
-    Every HLS segment starts on an IDR frame so HLS and RTSP playback stay in
-    lock-step at every segment boundary.  Changing this value requires a
-    matching change to the FFmpeg -force_key_frames interval in worker.py.
 
-  • hlsSegmentCount: 10  — raised from 7 to 10.  More segments in the playlist
-    gives players a larger buffer window, reducing rebuffering during brief
-    network hiccups.  Memory cost is small (10 × 4 s = 40 s of media per
-    stream) and does not affect latency.
-
-  • hlsSegmentMaxSize: omitted — field removed in v6.6.1.
-    MediaMTX v1.9.x deserialises this field into a Go string type.
-    Writing a bare integer (20971520) raises:
-      ERR: json: cannot unmarshal number into Go struct field
-           alias.hlsSegmentMaxSize of type string
-    Omitting the field lets MediaMTX use its internal default and is
-    compatible with all v1.9.x builds without requiring a quoted value.
-
-  • readTimeout / writeTimeout: 30s  — raised from 15 s to 30 s to give
-    the high-quality encoder enough headroom to push frames without triggering
-    a session teardown under CPU load.
-
-FIX (v5.0.6 / v6.0):
-  • spath = cfg.rtsp_path  (no "~all" fallback).
-    The new version used  spath = cfg.rtsp_path if cfg.rtsp_path else "~all"
-    because models.py was returning "" for empty stream_path.  models.py is
-    now fixed to always return "stream" as the default, so rtsp_path is never
-    empty and the ~all wildcard is not needed.
-
-    Using ~all caused two problems:
-      1. MediaMTX v1.9.1 does not reliably match the bare root path "/" under
-         ~all, so FFmpeg's push to rtsp://127.0.0.1:<port>/ was rejected.
-      2. All streams on the same server shared one wildcard path block, which
-         broke multi-stream isolation.
-
-  • hlsAllowOrigin: '*'  — singular, plain string (unchanged from v5.0.6).
-  • hlsPartDuration: 0s  — disables Low-Latency HLS (LL-HLS).
-
-Previously fixed:
-  v5.0.5 — hlsAlwaysRemux: true, removed `source: publisher` from paths
-  v5.0.4 — rtmp/srt/webrtc: false (correct v1.9.1 disable keys)
-  v5.0.3 — log file opened with "w" so stale errors don't pollute new runs
 """
 from __future__ import annotations
 
