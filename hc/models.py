@@ -166,8 +166,15 @@ class StreamConfig:
     enabled:        bool
     shuffle:        bool  = False
     stream_path:    str   = ""
-    video_bitrate:  str   = "2500k"
-    audio_bitrate:  str   = "128k"
+    # Default bitrates (v6.4 high-resolution mode):
+    #   8000k video — sufficient for broadcast-quality 1080p H.264 high profile
+    #                 with CRF 18 (CRF is the primary quality lever; maxrate
+    #                 just caps the peak — simple scenes use far fewer bits).
+    #   320k  audio — AAC-LC 320 kbps is transparent at 48 kHz stereo.
+    #                 128k was audibly lossy on music/dialogue-heavy content.
+    # Operators can override these per-stream in the Web UI / streams.json.
+    video_bitrate:  str   = "8000k"
+    audio_bitrate:  str   = "320k"
     hls_enabled:    bool  = False
     row_index:      int   = 0
     folder_source:  Optional[Path] = None
