@@ -303,21 +303,70 @@ def _notify_folder_upload(upload_dir: Path) -> None:
         log.debug("_notify_folder_upload error: %s", exc)
 
 def _get_next_in_queue(st, cfg, n=2):
-    """Return the next *n* playlist file names after the currently playing item."""
+    """
+    Return the next *n* playlist file names after the currently playing item.
+
+    Uses playlist_order (which reflects compliance pinning and shuffle state)
+    so the sequence shown always matches what will actually play next.
+
+    Root cause of the wrong +1/+2 display
+    ──────────────────────────────────────
+    The folder scanner sorts files alphabetically, so a 7-day playlist ends up
+    stored as: _FRI_(0) _MON_(1) _SAT_(2) _SUN_(3) _THU_(4) _TUE_(5) _WED_(6).
+
+    Compliance pins playlist_index=4 for Thursday.  Walking order[5] and
+    order[6] gives _TUE_ and _WED_ — the alphabetically adjacent files — NOT
+    the next broadcast days (_FRI_ and _SAT_).
+
+    Fix: for compliance streams collect ALL files after the current one,
+    sort them by their day-of-week distance from today (1=tomorrow … 6=yesterday),
+    then return the first *n*.  Non-compliance / shuffle streams use the raw
+    walk order unchanged (shuffle has its own intentional ordering).
+    """
     playlist = cfg.playlist
     if not playlist:
         return []
     order = getattr(st, "playlist_order", None) or list(range(len(playlist)))
     idx   = getattr(st, "playlist_index", 0) or 0
-    result = []
-    for offset in range(1, n + 1):
+
+    # Collect ALL remaining items in walk order (wraps around).
+    remaining = []
+    for offset in range(1, len(order)):
         next_ord_idx = (idx + offset) % len(order)
         pl_idx = order[next_ord_idx]
         try:
-            result.append(playlist[pl_idx].file_path.name)
+            remaining.append(playlist[pl_idx].file_path.name)
         except (IndexError, AttributeError):
             pass
-    return result
+
+    # For compliance streams, re-order by day-of-week distance from today so
+    # the UI shows the true broadcast sequence rather than alphabetical order.
+    if getattr(cfg, "compliance_enabled", False) and len(remaining) > 1:
+        import re as _re
+        from datetime import datetime as _dt
+
+        _DAY_TAG = {
+            "MON": 0, "TUE": 1, "WED": 2, "THU": 3,
+            "FRI": 4, "SAT": 5, "SUN": 6,
+        }
+        today = _dt.now().weekday()  # 0=Mon … 6=Sun
+
+        def _day_distance(filename: str) -> int:
+            """
+            Days forward from today until this file's tagged weekday (min 1).
+            Untagged files sort to the very end.
+            """
+            m = _re.search(r'_(MON|TUE|WED|THU|FRI|SAT|SUN)_', filename, _re.IGNORECASE)
+            if not m:
+                return 7 + len(remaining)
+            file_day = _DAY_TAG.get(m.group(1).upper(), 7)
+            dist = (file_day - today) % 7
+            # dist == 0 means same weekday as today (next cycle) → put last
+            return dist if dist > 0 else 7
+
+        remaining.sort(key=_day_distance)
+
+    return remaining[:n]
 
 
 
