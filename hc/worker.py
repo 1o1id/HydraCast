@@ -1,6 +1,35 @@
 """
 hc/worker.py  —  LogBuffer, media probe helpers, and StreamWorker.
 
+FIXES (v5.3.9):
+  • Added module-level _RECONNECT_SEM = threading.Semaphore(3).
+    Limits simultaneous MediaMTX reconnect operations to 3 at any time,
+    serialising the burst that occurs when 20+ compliance streams all hit
+    their 24-hour loop boundary in the same second.
+
+  • Bug 1 (High): _RECONNECT_SEM is now acquired on the else-branch of
+    _monitor() (file-change / broken-pipe-same-file path).  Previously only
+    the same-file clean-exit path held the semaphore; the else-branch called
+    _cycle_mediamtx() + _start_ffmpeg_with_retry() concurrently for every
+    stream, causing the attempt-4/6 failures visible in the logs.
+
+  • Bug 3 (Low): Single-file compliance streams now go through a dedicated
+    semaphore-guarded path in _monitor() instead of falling through to
+    _auto_restart().  They receive the same jitter + settle + cycle logic as
+    multi-file streams, and the semaphore prevents their concurrent reconnects
+    from colliding with each other and with multi-file stream reconnects.
+
+  • Bug 8 (Low): Compliance check thread spawning is now guarded by tracking
+    the previous thread reference (self._comp_check_thread).  If the previous
+    check thread is still alive (e.g. a slow seek() call), a new thread is
+    not spawned — preventing two concurrent compliance-check threads from both
+    calling seek() and racing each other.
+
+  • Bug 9 (Medium, manager.py): _auto_restart() now sets state.restarting=True
+    at the start of its countdown and clears it in a finally block when done.
+    StreamManager.start_stream() returns early when state.restarting is True,
+    so the scheduler can no longer race the countdown with a duplicate start.
+
 FIXES (v5.3.8):
   • _do_start() port availability check: replaced the TCP-only 0.8 s settle
     with the same TCP + UDP dual-probe strategy used by _cycle_mediamtx().
@@ -225,6 +254,16 @@ from hc.models import OneShotEvent, PlaylistItem, StreamState, StreamStatus
 from hc.utils import _fmt_duration, _kill_orphan_on_port, _port_in_use, _wait_for_port, _wait_for_rtsp
 
 log = logging.getLogger(__name__)
+
+# Semaphore that limits simultaneous MediaMTX reconnect operations.
+# With 20+ compliance streams all hitting their 24-hour boundary at the same
+# second, every stream tries to call _cycle_mediamtx() + _start_ffmpeg_with_retry
+# concurrently.  Limiting to 3 concurrent reconnects serialises the storm and
+# gives each MediaMTX exclusive time to bind its UDP RTP/RTCP ports before the
+# next one starts.  Both the same-file path (settle + retry) and the else-branch
+# (cycle + retry) must hold this semaphore.  Timeout of 60 s is generous enough
+# that even the slowest stream (last in queue when all 20+ contend) succeeds.
+_RECONNECT_SEM = threading.Semaphore(3)
 
 
 # =============================================================================
@@ -1981,12 +2020,25 @@ class StreamWorker:
                         elif _now - _last >= max(60.0, _cfg.compliance_resync_interval):
                             # Stamp BEFORE spawning so a slow thread can't
                             # double-fire before it finishes.
-                            self.state.compliance_last_check_ts = _now
-                            threading.Thread(
-                                target=self._compliance_check_and_resync,
-                                daemon=True,
-                                name=f"comp-check-{_cfg.port}",
-                            ).start()
+                            # Bug 8 fix: skip spawning if a previous check thread
+                            # is still running (e.g. a slow seek() call), so we
+                            # never have two concurrent compliance-check threads
+                            # racing each other and both attempting to call seek().
+                            _prev_comp_t = getattr(self, "_comp_check_thread", None)
+                            if _prev_comp_t is None or not _prev_comp_t.is_alive():
+                                self.state.compliance_last_check_ts = _now
+                                self._comp_check_thread = threading.Thread(
+                                    target=self._compliance_check_and_resync,
+                                    daemon=True,
+                                    name=f"comp-check-{_cfg.port}",
+                                )
+                                self._comp_check_thread.start()
+                            else:
+                                self._log(
+                                    "Compliance check skipped — previous check "
+                                    "thread still running.",
+                                    "INFO",
+                                )
                         # ── Alert auto-clear: re-check every 60 s when a
                         # compliance alert is active so a file uploaded after
                         # stream start clears the banner without a restart.
@@ -2068,6 +2120,97 @@ class StreamWorker:
                 "to avoid overwriting a valid saved position.",
                 "WARN",
             )
+
+        # ── Bug 3 fix: single-file compliance streams ─────────────────────────
+        # Single-file playlists previously fell through to _auto_restart() on
+        # every clean/broken-pipe loop exit, bypassing _RECONNECT_SEM entirely.
+        # With 20+ single-file compliance streams looping simultaneously this
+        # produced the same reconnect storm as the multi-file else-branch.
+        # Mirror the multi-file same-file path here so single-file streams also
+        # serialize through the semaphore.
+        if (_clean_exit
+                and not self.state.oneshot_active
+                and len(self.state.config.playlist) == 1):
+            next_item = self._current_item()
+            if next_item and next_item.file_path.exists():
+                self.state.duration = probe_duration(next_item.file_path)
+                try:
+                    h, m, s = next_item.start_position.split(":")
+                    spos = int(h) * 3600 + int(m) * 60 + float(s)
+                except Exception:
+                    spos = 0.0
+                if self.state.config.compliance_enabled:
+                    try:
+                        from hc.compliance import calculate_compliance_offset
+                        spos, _expl_sf = calculate_compliance_offset(
+                            video_duration=self.state.duration,
+                            broadcast_start=self.state.config.compliance_start,
+                            loop_calculation=self.state.config.compliance_loop,
+                        )
+                        self._log(f"Single-file compliance seek: {_expl_sf}")
+                        self.state.compliance_last_check_ts = time.time()
+                    except Exception as _exc_sf:
+                        self._log(
+                            f"Single-file compliance offset failed: {_exc_sf} "
+                            "— using playlist start position",
+                            "WARN",
+                        )
+                _mtx_alive_sf = (
+                    self.state.mtx_proc is not None
+                    and self.state.mtx_proc.poll() is None
+                )
+                _sem_acq_sf = _RECONNECT_SEM.acquire(timeout=60)
+                try:
+                    if _is_broken_pipe and not _mtx_alive_sf:
+                        self._log(
+                            "Single-file loop — broken-pipe and MediaMTX dead; "
+                            "cycling to restore it.",
+                            "WARN",
+                        )
+                        if not self._cycle_mediamtx():
+                            self._log(
+                                "Single-file loop: MediaMTX cycle failed — "
+                                "triggering auto-restart.",
+                                "ERROR",
+                            )
+                            self._auto_restart()
+                            return
+                    elif _is_broken_pipe:
+                        # MediaMTX alive but session dirty — cycle to clear it.
+                        self._log(
+                            "Single-file loop — broken-pipe; cycling MediaMTX "
+                            "to clear dirty session.",
+                            "WARN",
+                        )
+                        if not self._cycle_mediamtx():
+                            self._log(
+                                "Single-file loop: MediaMTX cycle failed — "
+                                "triggering auto-restart.",
+                                "ERROR",
+                            )
+                            self._auto_restart()
+                            return
+                    else:
+                        # Clean (code-0/255) exit — settle before reconnect.
+                        _sf_jitter = (self.state.config.port % 20) * 0.15
+                        time.sleep(1.5 + _sf_jitter)
+                    if self._start_ffmpeg_with_retry(next_item, spos):
+                        threading.Thread(
+                            target=self._monitor, daemon=True,
+                            name=f"mon-{self.state.config.port}",
+                        ).start()
+                        return
+                    # Retry budget exhausted; fall through to auto-restart.
+                    self._log(
+                        "Single-file loop: FFmpeg failed after all retries — "
+                        "triggering auto-restart.",
+                        "ERROR",
+                    )
+                    self._auto_restart()
+                    return
+                finally:
+                    if _sem_acq_sf:
+                        _RECONNECT_SEM.release()
 
         # ── Advance playlist (multi-file, clean exits only) ─────────────────
         # Only advance on a clean exit (0 or 255).  On an error exit, let
@@ -2197,57 +2340,62 @@ class StreamWorker:
                         "Same-file loop — skipping MediaMTX cycle "
                         "(codec parameters unchanged)."
                     )
-                    # Brief settle: give MediaMTX time to release the previous
-                    # publisher session before FFmpeg reconnects.  Without this,
-                    # the new FFmpeg ANNOUNCE races the session teardown and gets
-                    # EPIPE (broken-pipe) on attempt 1 every single loop.
-                    #
-                    # Per-stream jitter: when 20+ compliance streams all hit
-                    # their 24-hour boundary at the same second, a flat 1.5 s
-                    # sleep makes every stream attempt its reconnect in a
-                    # single synchronized burst — each FFmpeg connect collides
-                    # with the next stream's MediaMTX teardown, producing a
-                    # cascade of broken-pipe retries that exhaust all 6 attempts
-                    # and spill into _auto_restart().
-                    #
-                    # Jitter = (port mod 20) × 0.15 s → 0.0–2.85 s spread.
-                    # Total settle = 1.5 s base + jitter → 1.5–4.35 s window.
-                    # This gives each MediaMTX ~150–200 ms of exclusive settle
-                    # time before the next stream's FFmpeg connects, which is
-                    # sufficient for session teardown on a loaded Windows host.
-                    # The base 1.5 s is preserved so low-numbered ports (jitter≈0)
-                    # still have the same protection as before.
-                    _loop_jitter = (self.state.config.port % 20) * 0.15
-                    time.sleep(1.5 + _loop_jitter)
-                    if not self._start_ffmpeg_with_retry(next_item, spos):
-                        # All retries (typically 6 × up-to-10 s = ~36 s) failed
-                        # despite MediaMTX appearing alive.  The most common cause
-                        # is a slow publisher-session release: MediaMTX accepted
-                        # the RTSP ANNOUNCE but is still flushing the previous
-                        # publisher's buffers to connected readers (HLS segments,
-                        # RTMP relays, etc.) and rejects the new push with EPIPE.
-                        # On a loaded Windows host with 20+ simultaneous streams
-                        # this flush can take longer than the entire retry budget.
+                    # Acquire semaphore BEFORE the settle sleep so at most 3
+                    # streams reconnect concurrently, preventing the burst that
+                    # exhausts retry budgets when 20+ streams loop simultaneously.
+                    _sem_acq_a = _RECONNECT_SEM.acquire(timeout=60)
+                    try:
+                        # Brief settle: give MediaMTX time to release the previous
+                        # publisher session before FFmpeg reconnects.  Without this,
+                        # the new FFmpeg ANNOUNCE races the session teardown and gets
+                        # EPIPE (broken-pipe) on attempt 1 every single loop.
                         #
-                        # Two-stage recovery: force a full MediaMTX cycle to
-                        # atomically clear the stuck session, then attempt one
-                        # more FFmpeg connection.  This is faster than falling
-                        # through to _auto_restart() (which carries a 5+ second
-                        # backoff penalty and burns a restart credit), and more
-                        # reliable than additional sleep-and-retry loops.
-                        self._log(
-                            "Same-file loop: retries exhausted — forcing "
-                            "MediaMTX cycle to clear stuck session.",
-                            "WARN",
-                        )
-                        if self._cycle_mediamtx():
-                            if self._start_ffmpeg_with_retry(next_item, spos):
-                                # Recovered via forced cycle.
-                                threading.Thread(
-                                    target=self._monitor, daemon=True,
-                                    name=f"mon-{self.state.config.port}",
-                                ).start()
-                                return
+                        # Per-stream jitter: when 20+ compliance streams all hit
+                        # their 24-hour boundary at the same second, a flat 1.5 s
+                        # sleep makes every stream attempt its reconnect in a
+                        # single synchronized burst — each FFmpeg connect collides
+                        # with the next stream's MediaMTX teardown, producing a
+                        # cascade of broken-pipe retries that exhaust all 6 attempts
+                        # and spill into _auto_restart().
+                        #
+                        # Jitter = (port mod 20) × 0.15 s → 0.0–2.85 s spread.
+                        # Total settle = 1.5 s base + jitter → 1.5–4.35 s window.
+                        # This gives each MediaMTX ~150–200 ms of exclusive settle
+                        # time before the next stream's FFmpeg connects, which is
+                        # sufficient for session teardown on a loaded Windows host.
+                        # The base 1.5 s is preserved so low-numbered ports (jitter≈0)
+                        # still have the same protection as before.
+                        _loop_jitter = (self.state.config.port % 20) * 0.15
+                        time.sleep(1.5 + _loop_jitter)
+                        if not self._start_ffmpeg_with_retry(next_item, spos):
+                            # All retries (typically 6 × up-to-10 s = ~36 s) failed
+                            # despite MediaMTX appearing alive.  The most common cause
+                            # is a slow publisher-session release: MediaMTX accepted
+                            # the RTSP ANNOUNCE but is still flushing the previous
+                            # publisher's buffers to connected readers (HLS segments,
+                            # RTMP relays, etc.) and rejects the new push with EPIPE.
+                            # On a loaded Windows host with 20+ simultaneous streams
+                            # this flush can take longer than the entire retry budget.
+                            #
+                            # Two-stage recovery: force a full MediaMTX cycle to
+                            # atomically clear the stuck session, then attempt one
+                            # more FFmpeg connection.  This is faster than falling
+                            # through to _auto_restart() (which carries a 5+ second
+                            # backoff penalty and burns a restart credit), and more
+                            # reliable than additional sleep-and-retry loops.
+                            self._log(
+                                "Same-file loop: retries exhausted — forcing "
+                                "MediaMTX cycle to clear stuck session.",
+                                "WARN",
+                            )
+                            if self._cycle_mediamtx():
+                                if self._start_ffmpeg_with_retry(next_item, spos):
+                                    # Recovered via forced cycle.
+                                    threading.Thread(
+                                        target=self._monitor, daemon=True,
+                                        name=f"mon-{self.state.config.port}",
+                                    ).start()
+                                    return
                         self._log(
                             "Same-file loop: forced cycle also failed — "
                             "triggering auto-restart.",
@@ -2255,6 +2403,9 @@ class StreamWorker:
                         )
                         self._auto_restart()
                         return
+                    finally:
+                        if _sem_acq_a:
+                            _RECONNECT_SEM.release()
                 else:
                     # Cycle MediaMTX when any of these is true:
                     # (a) File changed — new codec params need a fresh session.
@@ -2277,22 +2428,35 @@ class StreamWorker:
                             "cycling MediaMTX to clear forced-close session.",
                             "WARN",
                         )
-                    if not self._cycle_mediamtx():
-                        self._log(
-                            "Playlist advance: MediaMTX cycle failed — "
-                            "triggering auto-restart.",
-                            "ERROR",
-                        )
-                        self._auto_restart()
-                        return
-                    if not self._start_ffmpeg_with_retry(next_item, spos):
-                        self._log(
-                            "Playlist advance: FFmpeg failed to connect after all "
-                            "retries — triggering auto-restart.",
-                            "ERROR",
-                        )
-                        self._auto_restart()
-                        return
+                    # Bug 1 fix: acquire _RECONNECT_SEM on the else-branch so
+                    # broken-pipe exits (and file-change transitions) are
+                    # serialised through the same gate as the same-file path.
+                    # Previously this branch called _cycle_mediamtx() +
+                    # _start_ffmpeg_with_retry() without holding the semaphore,
+                    # so all 20+ streams hit their MediaMTX cycles concurrently
+                    # at the loop boundary — exactly the storm the semaphore was
+                    # introduced to prevent.
+                    _sem_acq_b = _RECONNECT_SEM.acquire(timeout=60)
+                    try:
+                        if not self._cycle_mediamtx():
+                            self._log(
+                                "Playlist advance: MediaMTX cycle failed — "
+                                "triggering auto-restart.",
+                                "ERROR",
+                            )
+                            self._auto_restart()
+                            return
+                        if not self._start_ffmpeg_with_retry(next_item, spos):
+                            self._log(
+                                "Playlist advance: FFmpeg failed to connect after all "
+                                "retries — triggering auto-restart.",
+                                "ERROR",
+                            )
+                            self._auto_restart()
+                            return
+                    finally:
+                        if _sem_acq_b:
+                            _RECONNECT_SEM.release()
                 threading.Thread(target=self._monitor, daemon=True,
                                  name=f"mon-{self.state.config.port}").start()
                 return
@@ -2398,31 +2562,37 @@ class StreamWorker:
         jitter = min(jitter, delay / 2.0)
 
         self._log(f"Auto-restart #{n+1} scheduled in {delay:.0f}s (jitter +{jitter:.1f}s) …", "WARN")
-        total_ticks = int((delay + jitter) * 10)
-        for _ in range(total_ticks):
-            # Abort countdown if stop is requested during the wait
+        # Signal to the scheduler that a restart is in progress so it doesn't
+        # race our countdown and call start_stream() concurrently (Bug 9 fix).
+        self.state.restarting = True  # type: ignore[attr-defined]
+        try:
+            total_ticks = int((delay + jitter) * 10)
+            for _ in range(total_ticks):
+                # Abort countdown if stop is requested during the wait
+                if self._stop.is_set() or self._seeking.is_set():
+                    self._log("Auto-restart cancelled during countdown.")
+                    return
+                time.sleep(0.1)
+            # Final check before actually restarting
             if self._stop.is_set() or self._seeking.is_set():
-                self._log("Auto-restart cancelled during countdown.")
+                self._log("Auto-restart cancelled (stop/seek set after countdown).")
                 return
-            time.sleep(0.1)
-        # Final check before actually restarting
-        if self._stop.is_set() or self._seeking.is_set():
-            self._log("Auto-restart cancelled (stop/seek set after countdown).")
-            return
-        self.state.restart_count += 1
-        self._log(f"Auto-restart #{self.state.restart_count} starting …", "WARN")
-        self._kill_mediamtx()
-        time.sleep(0.3)
-        if self._start_lock.acquire(timeout=20):
-            try:
-                if not self._stop.is_set():
-                    self._do_start()
-                else:
-                    self._log("Auto-restart aborted: stop flag set before _do_start.", "WARN")
-            finally:
-                self._start_lock.release()
-        else:
-            self._log("Auto-restart: could not acquire start lock — skipping.", "WARN")
+            self.state.restart_count += 1
+            self._log(f"Auto-restart #{self.state.restart_count} starting …", "WARN")
+            self._kill_mediamtx()
+            time.sleep(0.3)
+            if self._start_lock.acquire(timeout=20):
+                try:
+                    if not self._stop.is_set():
+                        self._do_start()
+                    else:
+                        self._log("Auto-restart aborted: stop flag set before _do_start.", "WARN")
+                finally:
+                    self._start_lock.release()
+            else:
+                self._log("Auto-restart: could not acquire start lock — skipping.", "WARN")
+        finally:
+            self.state.restarting = False  # type: ignore[attr-defined]
 
     def _cycle_mediamtx(self) -> bool:
         """
