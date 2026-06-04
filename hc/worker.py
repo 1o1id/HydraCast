@@ -1,6 +1,19 @@
 """
 hc/worker.py  —  LogBuffer, media probe helpers, and StreamWorker.
 
+FIXES (v5.2.0):
+  • _monitor(): clean (code 0) exit now always calls _auto_restart() when
+    _stop is not set — previously only broken-pipe exits restarted.  This
+    fixes streams that auto-stopped permanently after the playlist finished
+    (single-file with no -stream_loop, or multi-file after last item).
+
+  • _advance_playlist() log message fixed (correct 1-based item numbers).
+
+  • Folder-scan path (non-compliance): playlist_index is now preserved across
+    auto-restarts so sequential multi-file playlists continue from the next
+    file instead of always replaying file 0.  Index is only clamped if the
+    playlist shrank since the last scan; first start still resets to 0.
+
 FIXES (v5.1.0):
   • _auto_restart() now guards against _stop flag being set — prevents
     the stream re-appearing after a manual Stop (S key).
@@ -294,7 +307,7 @@ class StreamWorker:
             )
         else:
             self._log(
-                f"Playlist advanced: item {old_idx+1} → {self.state.playlist_index+1}"
+                f"Playlist advanced: item {old_idx + 1} → {self.state.playlist_index + 1}"
                 f" of {len(self.state.playlist_order)}"
             )
 
@@ -909,10 +922,13 @@ class StreamWorker:
                     self.state.playlist_order = self._build_order()
                 else:
                     # Non-compliance restart: rebuild order and clamp index.
+                    # Preserve playlist_index so an auto-restart after a clean
+                    # file exit continues with the next file in sequence rather
+                    # than replaying file 0.
                     self.state.playlist_order = self._build_order()
-                    self.state.playlist_index = (
-                        self.state.playlist_index % len(self.state.playlist_order)
-                    )
+                    # Clamp in case the playlist shrank since last scan.
+                    if self.state.playlist_index >= len(self.state.playlist_order):
+                        self.state.playlist_index = 0
 
                 item = self._current_item()
                 if item is None:
@@ -1923,8 +1939,10 @@ class StreamWorker:
                     )
                 except Exception as _mail_exc:
                     log.debug("mailer hook error: %s", _mail_exc)
-            # Auto-restart on broken-pipe (loop end) just like a clean exit
-            if _is_broken_pipe and not self._stop.is_set():
+            # Auto-restart on any clean exit (broken-pipe OR normal code-0 end)
+            # so the stream stays live continuously.  The stop flag check prevents
+            # restart after a deliberate manual Stop.
+            if not self._stop.is_set():
                 self._auto_restart()
         else:
             self.state.status    = StreamStatus.ERROR
