@@ -1,6 +1,32 @@
 """
 hc/worker.py  —  LogBuffer, media probe helpers, and StreamWorker.
 
+FIXES (v5.3.5):
+  • _monitor() same-file loop path: added two-stage recovery when
+    _start_ffmpeg_with_retry() exhausts all retries despite MediaMTX
+    being alive.
+
+    Root cause: MediaMTX holds the publish path open while it flushes
+    the previous publisher's buffered frames to connected readers (HLS
+    segments, RTMP relays, etc.).  On a loaded Windows host with 20+
+    simultaneous streams at 2500 kbps, this flush can take longer than
+    the entire retry budget (~36 s across 6 attempts).  All retries get
+    EPIPE because the path slot is still occupied by the flush in progress.
+    After retry exhaustion the code fell through to _auto_restart(), which
+    carries a 5+ second backoff penalty and burns a restart credit — even
+    though the stream and MediaMTX were both healthy.
+
+    Two-stage recovery: when retries are exhausted, log a WARN, force a
+    full _cycle_mediamtx() (kill + restart MediaMTX, confirm RTSP ready),
+    then call _start_ffmpeg_with_retry() once more.  Killing MediaMTX
+    atomically clears the stuck session regardless of how long the flush
+    was taking, so the second FFmpeg connect succeeds immediately.  Only
+    if the forced cycle itself fails does the code fall through to
+    _auto_restart().
+
+    The new log line "Same-file loop: retries exhausted — forcing MediaMTX
+    cycle to clear stuck session." makes this path visible at WARN level.
+
 FIXES (v5.3.4):
   • _monitor() same-file loop path: added a MediaMTX liveness check before
     deciding to skip _cycle_mediamtx().
@@ -2063,9 +2089,37 @@ class StreamWorker:
                     _loop_jitter = (self.state.config.port % 20) * 0.15
                     time.sleep(1.5 + _loop_jitter)
                     if not self._start_ffmpeg_with_retry(next_item, spos):
+                        # All retries (typically 6 × up-to-10 s = ~36 s) failed
+                        # despite MediaMTX appearing alive.  The most common cause
+                        # is a slow publisher-session release: MediaMTX accepted
+                        # the RTSP ANNOUNCE but is still flushing the previous
+                        # publisher's buffers to connected readers (HLS segments,
+                        # RTMP relays, etc.) and rejects the new push with EPIPE.
+                        # On a loaded Windows host with 20+ simultaneous streams
+                        # this flush can take longer than the entire retry budget.
+                        #
+                        # Two-stage recovery: force a full MediaMTX cycle to
+                        # atomically clear the stuck session, then attempt one
+                        # more FFmpeg connection.  This is faster than falling
+                        # through to _auto_restart() (which carries a 5+ second
+                        # backoff penalty and burns a restart credit), and more
+                        # reliable than additional sleep-and-retry loops.
                         self._log(
-                            "Same-file loop: FFmpeg failed to connect after all "
-                            "retries — triggering auto-restart.",
+                            "Same-file loop: retries exhausted — forcing "
+                            "MediaMTX cycle to clear stuck session.",
+                            "WARN",
+                        )
+                        if self._cycle_mediamtx():
+                            if self._start_ffmpeg_with_retry(next_item, spos):
+                                # Recovered via forced cycle.
+                                threading.Thread(
+                                    target=self._monitor, daemon=True,
+                                    name=f"mon-{self.state.config.port}",
+                                ).start()
+                                return
+                        self._log(
+                            "Same-file loop: forced cycle also failed — "
+                            "triggering auto-restart.",
                             "ERROR",
                         )
                         self._auto_restart()
