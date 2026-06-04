@@ -15,6 +15,14 @@ PORT SCHEME (v6.2+)
     • all four derived ports (RTSP, HLS, RTP, RTCP) are free
     • no OS firewall rule blocks them
 
+FIX (v6.5.1 — writeTimeout note):
+  • readTimeout / writeTimeout remain at 30 s (set in v6.3).
+    These values are NOT the root cause of the broken-pipe restart loop —
+    that was -preset slow with -re causing encoder stalls (fixed in worker.py
+    v6.5.1 by switching to -preset medium).  30 s is the correct headroom
+    for a high-quality encode on a loaded host; reducing it would reintroduce
+    the very problem it was raised to avoid.
+
 FIX (v6.3 — quality + HLS/RTSP sync):
   • hlsSegmentDuration: 4s  — aligns with FFmpeg -force_key_frames every 4 s.
     Every HLS segment starts on an IDR frame so HLS and RTSP playback stay in
@@ -31,8 +39,8 @@ FIX (v6.3 — quality + HLS/RTSP sync):
     4 s = 4 MB, well within the cap).
 
   • readTimeout / writeTimeout: 30s  — raised from 15 s to 30 s to give
-    the high-quality slow preset encoder enough headroom to push frames
-    without triggering a session teardown under CPU load.
+    the high-quality encoder enough headroom to push frames without triggering
+    a session teardown under CPU load.
 
 FIX (v5.0.6 / v6.0):
   • spath = cfg.rtsp_path  (no "~all" fallback).
