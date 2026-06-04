@@ -309,20 +309,23 @@ def _get_next_in_queue(st, cfg, n=2):
     Uses playlist_order (which reflects compliance pinning and shuffle state)
     so the sequence shown always matches what will actually play next.
 
-    Root cause of the wrong +1/+2 display
-    ──────────────────────────────────────
-    The folder scanner sorts files alphabetically, so a 7-day playlist ends up
-    stored as: _FRI_(0) _MON_(1) _SAT_(2) _SUN_(3) _THU_(4) _TUE_(5) _WED_(6).
+    Weekday ordering
+    ────────────────
+    For any playlist whose files carry day-tags (_MON_, _TUE_, … _SUN_),
+    the remaining items are re-sorted by their day-of-week distance from
+    today so the UI always shows the true broadcast week ahead:
+      today=THU → +1=FRI, +2=SAT, +3=SUN, +4=MON, +5=TUE, +6=WED
 
-    Compliance pins playlist_index=4 for Thursday.  Walking order[5] and
-    order[6] gives _TUE_ and _WED_ — the alphabetically adjacent files — NOT
-    the next broadcast days (_FRI_ and _SAT_).
+    This applies regardless of whether compliance mode is enabled.  Without
+    this sort, a folder scan that returns files alphabetically would show
+    the wrong sequence (_MON_ +1, _TUE_ +2) when today is Thursday.
 
-    Fix: for compliance streams collect ALL files after the current one,
-    sort them by their day-of-week distance from today (1=tomorrow … 6=yesterday),
-    then return the first *n*.  Non-compliance / shuffle streams use the raw
-    walk order unchanged (shuffle has its own intentional ordering).
+    Shuffle streams keep their random walk order (shuffled playlists never
+    have meaningful day-tags).  Untagged files always sort to the end.
     """
+    import re as _re
+    from datetime import datetime as _dt
+
     playlist = cfg.playlist
     if not playlist:
         return []
@@ -339,32 +342,40 @@ def _get_next_in_queue(st, cfg, n=2):
         except (IndexError, AttributeError):
             pass
 
-    # For compliance streams, re-order by day-of-week distance from today so
-    # the UI shows the true broadcast sequence rather than alphabetical order.
-    if getattr(cfg, "compliance_enabled", False) and len(remaining) > 1:
-        import re as _re
-        from datetime import datetime as _dt
+    # Re-order by weekday distance from today whenever the playlist contains
+    # day-tagged files (works for both compliance and non-compliance streams).
+    # Shuffle streams are excluded — their intentional random order must be
+    # preserved, and shuffled playlists don't use day-tags.
+    _DAY_TAG = {
+        "MON": 0, "TUE": 1, "WED": 2, "THU": 3,
+        "FRI": 4, "SAT": 5, "SUN": 6,
+    }
+    _DAY_RE = _re.compile(r'_(MON|TUE|WED|THU|FRI|SAT|SUN)_', _re.IGNORECASE)
 
-        _DAY_TAG = {
-            "MON": 0, "TUE": 1, "WED": 2, "THU": 3,
-            "FRI": 4, "SAT": 5, "SUN": 6,
-        }
-        today = _dt.now().weekday()  # 0=Mon … 6=Sun
+    _is_shuffled = getattr(cfg, "shuffle", False)
 
-        def _day_distance(filename: str) -> int:
-            """
-            Days forward from today until this file's tagged weekday (min 1).
-            Untagged files sort to the very end.
-            """
-            m = _re.search(r'_(MON|TUE|WED|THU|FRI|SAT|SUN)_', filename, _re.IGNORECASE)
-            if not m:
-                return 7 + len(remaining)
-            file_day = _DAY_TAG.get(m.group(1).upper(), 7)
-            dist = (file_day - today) % 7
-            # dist == 0 means same weekday as today (next cycle) → put last
-            return dist if dist > 0 else 7
+    if not _is_shuffled and len(remaining) > 1:
+        # Check if at least one remaining file has a day-tag.
+        _has_day_tags = any(_DAY_RE.search(f) for f in remaining)
 
-        remaining.sort(key=_day_distance)
+        if _has_day_tags:
+            today = _dt.now().weekday()  # 0=Mon … 6=Sun
+
+            def _day_distance(filename: str) -> int:
+                """
+                Days forward from today until this file's tagged weekday.
+                Returns 7 for same-day (next cycle, plays last among tagged)
+                and 7+pos for untagged files so they always trail tagged ones.
+                """
+                m = _DAY_RE.search(filename)
+                if not m:
+                    return 7 + len(remaining)
+                file_day = _DAY_TAG.get(m.group(1).upper(), 7)
+                dist = (file_day - today) % 7
+                # dist == 0 means same weekday as today → put at end of tagged
+                return dist if dist > 0 else 7
+
+            remaining.sort(key=_day_distance)
 
     return remaining[:n]
 
