@@ -1,6 +1,18 @@
 """
 hc/worker.py  —  LogBuffer, media probe helpers, and StreamWorker.
 
+FIXES (v5.3.0):
+  • _start_ffmpeg_with_retry(): broken-pipe exit (code 4294967264 on Windows,
+    -32 on Linux/macOS) is now treated as a clean/recoverable exit, not a
+    fatal error.  Previously, when a single-file compliance stream looped via
+    _auto_restart (playlist length == 1, bypassing the multi-file same-file-
+    loop path), the first FFmpeg reconnect attempt got EPIPE from MediaMTX
+    mid-settle and exited immediately with code 4294967264.  The non-400
+    else-branch classified this as a hard error, set StreamStatus.ERROR, and
+    returned False — causing _auto_restart to fire again, burning through
+    MAX_AUTO_RESTARTS in seconds and permanently silencing the stream.  The
+    fix mirrors the broken-pipe classification already present in _monitor().
+
 FIXES (v5.2.0):
   • _monitor(): clean (code 0) exit now always calls _auto_restart() when
     _stop is not set — previously only broken-pipe exits restarted.  This
@@ -1600,16 +1612,38 @@ class StreamWorker:
                     return False
             else:
                 # Non-400 error: capture it and let the caller decide.
-                if proc.returncode not in (None, 0, 255):
+                #
+                # Broken-pipe (4294967264 on Windows = -32 signed, or -32 on
+                # Linux/macOS) means FFmpeg connected but the MediaMTX session
+                # closed before it could push any frames.  This happens on the
+                # very first reconnect after _auto_restart kills and relaunches
+                # MediaMTX: the RTSP path handler accepts the OPTIONS probe but
+                # hasn't fully published yet, so FFmpeg pushes a frame and
+                # immediately gets EPIPE back.  Treating this as a fatal error
+                # burns through MAX_AUTO_RESTARTS within seconds and permanently
+                # silences the stream.
+                #
+                # Treat broken-pipe exactly like code 0/255 (a clean, immediate
+                # exit).  The caller (_auto_restart → _do_start, or the
+                # same-file-loop path in _monitor) will spawn a fresh monitor
+                # thread which will call _auto_restart() again with a short
+                # backoff, giving MediaMTX the time it needs to settle.
+                _rc = proc.returncode
+                _is_bp = (
+                    (_rc == 4294967264 or _rc == -32)
+                    and ("broken pipe" in stderr_txt.lower() or not stderr_txt)
+                )
+                if not _is_bp and _rc not in (None, 0, 255):
                     self.state.status    = StreamStatus.ERROR
                     self.state.error_msg = (
                         stderr_txt[:300].strip()
-                        or f"FFmpeg exited with code {proc.returncode}"
+                        or f"FFmpeg exited with code {_rc}"
                     )
                     self._log(self.state.error_msg, "ERROR")
                     return False
-                # Code 0 / 255 on a fresh start means the file ended instantly
-                # (e.g. seek beyond end).  Return True so the monitor can advance.
+                # Code 0 / 255 / broken-pipe on a fresh start means the file
+                # ended instantly (e.g. seek beyond end) or the RTSP session
+                # closed cleanly.  Return True so the monitor can advance.
                 return True
 
         return False
