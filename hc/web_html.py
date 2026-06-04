@@ -200,6 +200,10 @@ _HTML = r"""
 @keyframes fadeIn{
   from{opacity:0}to{opacity:1}
 }
+@keyframes bufferingPulse{
+  0%,100%{opacity:1;border-color:rgba(122,159,194,0.38)}
+  50%{opacity:0.55;border-color:rgba(122,159,194,0.75)}
+}
 @keyframes shimmer{
   0%{background-position:-200% 0}
   100%{background-position:200% 0}
@@ -699,6 +703,7 @@ tr:hover td{background:rgba(184,115,51,0.045)}
 .SCHED{background:var(--blue-dim);color:var(--blue);border:1px solid rgba(122,159,194,0.3)}
 .DISABLED{background:rgba(100,100,100,0.07);color:var(--text3);border:1px solid var(--border)}
 .ONESHOT{background:var(--purple-dim);color:var(--purple);border:1px solid rgba(154,138,176,0.4)}
+.BUFFERING{background:rgba(122,159,194,0.13);color:var(--blue);border:1px solid rgba(122,159,194,0.38);animation:bufferingPulse 1.1s ease-in-out infinite}
 
 /* ─────────── PROGRESS ─────────── */
 .prog{
@@ -2681,14 +2686,17 @@ function _sigOf(s){
          s.shuffle?1:0,
          s.active_event||'',
          s.current_file||'',
-         s.oneshot_active?1:0].join('|');
+         s.oneshot_active?1:0,
+         s.buffering?1:0].join('|');
 }
 
 function _rowCells(s,i,showRtsp){
   const pct=Math.max(0,Math.min(100,+s.progress)).toFixed(1);
   const fc=s.progress>80?'var(--red)':s.progress>55?'var(--yellow)':'var(--green)';
-  const status=s.status||'STOPPED';
-  const isEvent = status==='ONESHOT' || !!s.oneshot_active;
+  // Show BUFFERING badge while _start_ffmpeg_with_retry is absorbing transient
+  // broken-pipe / 400 Bad Request failures (state.buffering set by worker v5.3.7).
+  const status=s.buffering?'BUFFERING':(s.status||'STOPPED');
+  const isEvent = s.status==='ONESHOT' || !!s.oneshot_active;
   const nowPlayingFile = s.current_file || (isEvent ? s.active_event : null);
   return `
     <td class="td-muted">${i+1}</td>
@@ -2909,9 +2917,11 @@ async function loadViewer(){
   Object.keys(existing).forEach(n=>{ if(!names.has(n)){existing[n].remove();delete existing[n];} });
 
   data.forEach((s,idx)=>{
-    const status=s.status||'STOPPED';
-    const isLive=status==='LIVE';
-    const isEvent=status==='ONESHOT' || !!s.oneshot_active;
+    // Show BUFFERING badge while _start_ffmpeg_with_retry is absorbing transient
+    // broken-pipe / 400 Bad Request failures (state.buffering set by worker v5.3.7).
+    const status=s.buffering?'BUFFERING':(s.status||'STOPPED');
+    const isLive=s.status==='LIVE';
+    const isEvent=s.status==='ONESHOT' || !!s.oneshot_active;
     const pct=(+s.progress||0).toFixed(1);
     const nowFile = s.current_file || (isEvent ? s.active_event : null);
     // safeName must be computed ONCE here and used in BOTH the first-render
@@ -2927,7 +2937,7 @@ async function loadViewer(){
     if(!existing[s.name]){
       // ── First render: create the full card ──
       const div=document.createElement('div');
-      div.className='stream-card'+(isLive||isEvent?' is-live':'');
+      div.className='stream-card'+(isLive||isEvent||s.buffering?' is-live':'');
       div.dataset.vname=s.name;
       div.innerHTML=`
         <div class="stream-card-header">
@@ -2974,7 +2984,7 @@ async function loadViewer(){
     } else {
       // ── Subsequent renders: only update text/status, leave preview untouched ──
       const card=existing[s.name];
-      card.className='stream-card'+(isLive||isEvent?' is-live':'');
+      card.className='stream-card'+(isLive||isEvent||s.buffering?' is-live':'');
       // safeName already computed above — same value used for first-render classes.
       const badge=card.querySelector('.vc-badge-'+safeName);
       if(badge){badge.className='badge '+esc(status);badge.textContent=status;}
