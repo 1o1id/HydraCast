@@ -1763,6 +1763,16 @@ class StreamWorker:
         if (_clean_exit
                 and not self.state.oneshot_active
                 and len(self.state.config.playlist) > 1):
+            # ── Snapshot the file that just finished BEFORE any index mutation ──
+            # Used below to detect a compliance same-file pin (no-op transition),
+            # which must NOT trigger a full _cycle_mediamtx().  On a same-file
+            # loop the codec parameters are identical, so there is no publisher
+            # session mismatch — the cycle would just kill+restart MediaMTX
+            # unnecessarily, causing the cascade of "Port still in use after 8 s"
+            # warnings seen when 20+ compliance streams all hit their loop
+            # boundary simultaneously.
+            _prev_file = self.state.current_file()
+
             # ── Compliance: pin to today's day-tagged file on every clean exit ──
             # Without this guard, compliance streams cycle through all playlist
             # files in order (e.g. _MON_ → _TUE_ → _WED_) because _advance_playlist
@@ -1845,17 +1855,47 @@ class StreamWorker:
                             "using playlist start position",
                             "WARN",
                         )
-                # Cycle MediaMTX to clear the old publisher session; a direct
-                # _start_ffmpeg without cycling gets 400 Bad Request.
-                if not self._cycle_mediamtx():
+                # ── Decide whether a full MediaMTX cycle is needed ────────────
+                # _cycle_mediamtx() kills+restarts MediaMTX to clear the old
+                # publisher session.  This is necessary when the *file changes*,
+                # because the new file may have different codec parameters
+                # (SPS/PPS, resolution, framerate) that MediaMTX cached for the
+                # previous publisher.  Without cycling, the new FFmpeg push gets
+                # "400 Bad Request" from MediaMTX.
+                #
+                # When compliance pins back to the *same file* (the normal
+                # same-day loop: _THU_.mp4 → _THU_.mp4), the codec parameters
+                # are identical.  Cycling MediaMTX is unnecessary and harmful:
+                # with 20+ streams all hitting their loop boundary within a few
+                # seconds of each other, the simultaneous kill+restart storm
+                # exhausts the 8-second UDP-port-release window on Windows,
+                # producing an endless cascade of "Port still in use after 8 s"
+                # warnings and back-to-back MediaMTX restarts every ~10 s.
+                #
+                # Guard: skip the cycle when the file path hasn't changed.
+                # A true file change (e.g. midnight rollover _THU_ → _FRI_)
+                # still cycles normally.
+                _same_file = (
+                    _prev_file is not None
+                    and next_item.file_path == _prev_file
+                )
+                if _same_file:
                     self._log(
-                        "Playlist advance: MediaMTX cycle failed — "
-                        "triggering auto-restart.",
-                        "ERROR",
+                        "Same-file loop — skipping MediaMTX cycle "
+                        "(codec parameters unchanged)."
                     )
-                    self._auto_restart()
-                    return
-                self._start_ffmpeg_with_retry(next_item, spos)
+                    self._start_ffmpeg_with_retry(next_item, spos)
+                else:
+                    # File changed: cycle MediaMTX to clear old publisher state.
+                    if not self._cycle_mediamtx():
+                        self._log(
+                            "Playlist advance: MediaMTX cycle failed — "
+                            "triggering auto-restart.",
+                            "ERROR",
+                        )
+                        self._auto_restart()
+                        return
+                    self._start_ffmpeg_with_retry(next_item, spos)
                 threading.Thread(target=self._monitor, daemon=True,
                                  name=f"mon-{self.state.config.port}").start()
                 return
