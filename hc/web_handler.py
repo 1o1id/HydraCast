@@ -739,6 +739,12 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
 
         Optional column (include_files=1):
           filenames   — pipe-separated list of playlist file basenames
+
+        FIX: All row-building and CSV serialisation now happens BEFORE
+        send_response() is called.  This prevents the double-header
+        corruption that caused "Failed - Network error" in the browser
+        download manager: if anything throws while building the payload
+        the do_GET exception handler can still send a clean JSON 500.
         """
         import io, csv as _csv
         from hc.utils import _local_ip
@@ -772,6 +778,10 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
                     )
                 rows.append(row)
 
+        # ── Serialise to CSV bytes BEFORE touching the socket ────────────
+        # Any exception raised here will be caught by do_GET's try/except
+        # and a clean JSON 500 will be returned — no partial/corrupt HTTP
+        # response is possible because send_response() hasn't been called yet.
         buf = io.StringIO()
         writer = _csv.DictWriter(buf, fieldnames=fieldnames, lineterminator="\r\n")
         writer.writeheader()
@@ -781,6 +791,7 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
         ts    = datetime.now().strftime("%Y%m%d_%H%M%S")
         fname = f"hydracast_urls_{ts}.csv"
 
+        # ── Send response — nothing below this point may raise ───────────
         self.send_response(200)
         self.send_header("Content-Type",        "text/csv; charset=utf-8")
         self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
