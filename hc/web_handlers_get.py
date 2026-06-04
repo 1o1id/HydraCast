@@ -373,6 +373,7 @@ class _GetHandlersMixin:
                     "enabled":     cam.enabled,
                     "notes":       cam.notes,
                     "url_masked":  cam.url_masked,
+                    "url_display": cam.url_masked,
                 })
             self._json(result)
         except Exception as exc:
