@@ -15,15 +15,6 @@ PORT SCHEME (v6.2+)
     • all four derived ports (RTSP, HLS, RTP, RTCP) are free
     • no OS firewall rule blocks them
 
-FIX (v6.6.1 — hlsSegmentMaxSize type):
-  • hlsSegmentMaxSize: '20971520'  — quoted as a YAML string.
-    MediaMTX (v1.9.x) deserialises this field into a Go string type via its
-    alias mechanism.  Writing the bare integer 20971520 causes:
-      ERR: json: cannot unmarshal number into Go struct field
-           alias.hlsSegmentMaxSize of type string
-    Quoting it ('20971520') satisfies the Go JSON unmarshaller.
-    MediaMTX then parses the string internally as a byte count.
-
 FIX (v6.5.1 — writeTimeout note):
   • readTimeout / writeTimeout remain at 30 s (set in v6.3).
     These values are NOT the root cause of the broken-pipe restart loop —
@@ -43,9 +34,13 @@ FIX (v6.3 — quality + HLS/RTSP sync):
     network hiccups.  Memory cost is small (10 × 4 s = 40 s of media per
     stream) and does not affect latency.
 
-  • hlsSegmentMaxSize: '20971520'  — caps individual segment file size to
-    20 MiB (written as a quoted byte-count string; MediaMTX v1.9.x rejects
-    a bare integer for this field with "cannot unmarshal number into string").
+  • hlsSegmentMaxSize: omitted — field removed in v6.6.1.
+    MediaMTX v1.9.x deserialises this field into a Go string type.
+    Writing a bare integer (20971520) raises:
+      ERR: json: cannot unmarshal number into Go struct field
+           alias.hlsSegmentMaxSize of type string
+    Omitting the field lets MediaMTX use its internal default and is
+    compatible with all v1.9.x builds without requiring a quoted value.
 
   • readTimeout / writeTimeout: 30s  — raised from 15 s to 30 s to give
     the high-quality encoder enough headroom to push frames without triggering
@@ -160,8 +155,12 @@ class MediaMTXConfig:
                 f"hlsSegmentCount: 10\n"
                 f"hlsSegmentDuration: 4s\n"
                 f"hlsPartDuration: 0s\n"
-                # 20 MiB cap — quoted string required by MediaMTX v1.9.x Go unmarshaller.
-                f"hlsSegmentMaxSize: '20971520'\n"
+                # hlsSegmentMaxSize intentionally omitted — MediaMTX uses its
+                # internal default.  The bare-integer form (20971520) crashes
+                # the Go JSON unmarshaller with "cannot unmarshal number into
+                # Go struct field alias.hlsSegmentMaxSize of type string".
+                # The quoted form ('20971520') requires a newer MediaMTX build.
+                # Omitting the field entirely is compatible with all versions.
                 f"hlsAllowOrigin: '*'\n"
             )
         else:
