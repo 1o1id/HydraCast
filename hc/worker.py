@@ -30,6 +30,32 @@ FIXES (v5.3.9):
     StreamManager.start_stream() returns early when state.restarting is True,
     so the scheduler can no longer race the countdown with a duplicate start.
 
+  • Cold-start MediaMTX port collision fix (new):
+    _do_start() now acquires _RECONNECT_SEM before the port-check →
+    _start_mediamtx() → RTSP-ready-wait sequence.  This caps simultaneous
+    MediaMTX launches at 3, preventing the "listen udp4: bind: Only one usage
+    of each socket address" errors seen when 22 streams start simultaneously
+    on server restart.  The existing boot-jitter (port % 20 × 0.25 s) remains
+    as a first-pass spread; the semaphore is the hard cap that the jitter alone
+    cannot guarantee.
+
+    Root cause: at cold start all 22 _do_start() threads race through the boot
+    jitter (max ~4.75 s) and then try to bind UDP RTP/RTCP ports simultaneously.
+    Windows holds UDP sockets for 1–3 s after the previous MediaMTX exits; 22
+    simultaneous bind attempts on ports still held by the prior run causes ~11
+    of them to exit immediately with code 15 (Go runtime SIGTERM on bind
+    failure).  The semaphore serialises launches to 3 at a time so each
+    MediaMTX gets exclusive port-bind time.
+
+  • Cold-start scheduler race fix (manager.py):
+    _scheduler_loop() now sleeps 70 s before its first iteration.  Previously
+    the scheduler fired at t=0 and saw every stream as status=STOPPED (threads
+    were still inside _do_start() boot jitter), then called start_stream() for
+    every stream simultaneously — completely bypassing the stagger in start_all()
+    and the boot jitter in _do_start().  The 70 s initial delay clears the
+    worst-case start_all() + semaphore queue window before the scheduler starts
+    monitoring.
+
 FIXES (v5.3.8):
   • _do_start() port availability check: replaced the TCP-only 0.8 s settle
     with the same TCP + UDP dual-probe strategy used by _cycle_mediamtx().
@@ -1407,125 +1433,140 @@ class StreamWorker:
                 return False
 
         self._log(f"Checking port {cfg.port} availability …")
-        _killed_orphan = False
-        if _port_in_use(cfg.port):
-            self._log(
-                f"Port {cfg.port} is in use — attempting to kill orphan process.",
-                "WARN",
-            )
-            _kill_orphan_on_port(cfg.port)
-            _killed_orphan = True
-
-        if _killed_orphan:
-            # Windows: wait at least 3 s before probing — the OS releases
-            # sockets asynchronously after the process exits.
-            if IS_WIN:
-                time.sleep(3.0)
-            # Poll both TCP and UDP until they're both confirmed free.
-            _pc_deadline = time.time() + 8.0
-            while time.time() < _pc_deadline:
-                _tcp_ok = not _port_in_use(cfg.port)
-                _udp_ok = _udp_free_pc(_rtp_port)
-                if _tcp_ok and _udp_ok:
-                    if IS_WIN:
-                        time.sleep(0.3)   # brief extra settle for kernel state
-                    break
-                time.sleep(0.25)
-            else:
-                # Timeout — log what's still held and fail fast.
-                if _port_in_use(cfg.port):
-                    self.state.status    = StreamStatus.ERROR
-                    self.state.error_msg = (
-                        f"Port {cfg.port} still in use after kill attempt"
-                    )
-                    self._log(self.state.error_msg, "ERROR")
-                    return False
-                if not _udp_free_pc(_rtp_port):
-                    self._log(
-                        f"UDP RTP port {_rtp_port} still held after 8 s — "
-                        "MediaMTX may crash on bind. Proceeding anyway.",
-                        "WARN",
-                    )
-            self._log(f"Port {cfg.port} is now free.")
-        else:
-            self._log(f"Port {cfg.port} is free.")
-
-        # ── Write MediaMTX config ─────────────────────────────────────────────
-        self._log("Writing MediaMTX YAML config …")
+        # Acquire the reconnect semaphore before doing anything that touches
+        # the OS port stack.  At cold start all 22 _do_start() threads reach
+        # this point almost simultaneously (boot jitter spreads them, but
+        # the semaphore is the hard cap).  Limiting to 3 concurrent port-check
+        # + MediaMTX-launch operations ensures each MediaMTX has exclusive time
+        # to bind its UDP RTP/RTCP sockets before the next one starts.
+        # Timeout of 120 s is generous enough that the last stream in the queue
+        # (worst case: waiting for 7 slots × ~11 s each = ~77 s) still succeeds.
+        _sem_acq_do = _RECONNECT_SEM.acquire(timeout=120)
         try:
-            mtx_cfg = MediaMTXConfig.write(self.state)
-            self._log(f"MediaMTX config written: {mtx_cfg}")
-        except Exception as exc:
-            self.state.status    = StreamStatus.ERROR
-            self.state.error_msg = f"Failed to write MediaMTX config: {exc}"
-            self._log(self.state.error_msg, "ERROR")
-            return False
-
-        # ── Launch MediaMTX ───────────────────────────────────────────────────
-        if not self._start_mediamtx(mtx_cfg):
-            return False
-
-        # Wait for MediaMTX RTSP handler to be fully ready.
-        # _wait_for_port() only confirms TCP bind. On Windows, MediaMTX binds
-        # the port ~500-800 ms before its RTSP handler is initialised; ffmpeg
-        # connecting during that gap sends ANNOUNCE and gets 400 Bad Request.
-        # _wait_for_rtsp() sends a real RTSP OPTIONS and waits for 200 OK.
-        # Wait for MediaMTX RTSP handler to be fully ready.
-        # _wait_for_port() only confirms TCP bind. On Windows, MediaMTX binds
-        # the port ~500-800 ms before its RTSP handler is initialised; ffmpeg
-        # connecting during that gap sends ANNOUNCE and gets 400 Bad Request.
-        # _wait_for_rtsp() sends a real RTSP OPTIONS and waits for a response.
-        self._log(f"Waiting for MediaMTX RTSP handler :{cfg.port} (timeout {self.MTX_READY_TIMEOUT:.0f}s) ...")
-        _push_path = cfg.rtsp_path if cfg.rtsp_path else "stream"
-        mtx_proc   = self.state.mtx_proc
-
-        def _mtx_alive() -> bool:
-            return mtx_proc is not None and mtx_proc.poll() is None
-
-        if not _wait_for_rtsp(cfg.port, timeout=self.MTX_READY_TIMEOUT,
-                               path=_push_path, check_alive=_mtx_alive):
-            # Determine if MediaMTX crashed (process dead) or just didn't respond.
-            proc_dead  = mtx_proc is not None and mtx_proc.poll() is not None
-            crash_f    = getattr(mtx_proc, "_crash_f", None) if mtx_proc else None
-            log_tail   = _tail_log(LOGS_DIR() / f"mediamtx_{cfg.port}.log", 12)
-            crash_tail = _tail_log(crash_f, 20) if crash_f else ""
-            detail     = crash_tail or log_tail or "No output in MediaMTX log file"
-
-            if proc_dead:
-                exit_code = mtx_proc.returncode
+            _killed_orphan = False
+            if _port_in_use(cfg.port):
                 self._log(
-                    f"MediaMTX crashed during RTSP readiness probe "
-                    f"(exit code {exit_code}). "
-                    f"Log/crash output:\n{detail}\n"
-                    f"HINT: Run '{MEDIAMTX_BIN()} {mtx_cfg}' in a terminal "
-                    "to see the full error.",
-                    "ERROR",
+                    f"Port {cfg.port} is in use — attempting to kill orphan process.",
+                    "WARN",
                 )
+                _kill_orphan_on_port(cfg.port)
+                _killed_orphan = True
+
+            if _killed_orphan:
+                # Windows: wait at least 3 s before probing — the OS releases
+                # sockets asynchronously after the process exits.
+                if IS_WIN:
+                    time.sleep(3.0)
+                # Poll both TCP and UDP until they're both confirmed free.
+                _pc_deadline = time.time() + 8.0
+                while time.time() < _pc_deadline:
+                    _tcp_ok = not _port_in_use(cfg.port)
+                    _udp_ok = _udp_free_pc(_rtp_port)
+                    if _tcp_ok and _udp_ok:
+                        if IS_WIN:
+                            time.sleep(0.3)   # brief extra settle for kernel state
+                        break
+                    time.sleep(0.25)
+                else:
+                    # Timeout — log what's still held and fail fast.
+                    if _port_in_use(cfg.port):
+                        self.state.status    = StreamStatus.ERROR
+                        self.state.error_msg = (
+                            f"Port {cfg.port} still in use after kill attempt"
+                        )
+                        self._log(self.state.error_msg, "ERROR")
+                        return False
+                    if not _udp_free_pc(_rtp_port):
+                        self._log(
+                            f"UDP RTP port {_rtp_port} still held after 8 s — "
+                            "MediaMTX may crash on bind. Proceeding anyway.",
+                            "WARN",
+                        )
+                self._log(f"Port {cfg.port} is now free.")
             else:
-                tcp_up = _port_in_use(cfg.port)
-                hint = (
-                    "HINT: Windows Firewall or Antivirus may be intercepting "
-                    "RTSP on loopback (127.0.0.1). Try temporarily disabling "
-                    "real-time protection or adding a firewall exception for "
-                    f"TCP :{cfg.port}."
-                    if IS_WIN and tcp_up else
-                    f"HINT: MediaMTX TCP port {cfg.port} is NOT bound — "
-                    "the process may have crashed after the stability check."
-                    if not tcp_up else ""
-                )
-                self._log(
-                    f"MediaMTX RTSP-ready timeout :{cfg.port} after "
-                    f"{self.MTX_READY_TIMEOUT:.0f}s "
-                    f"(MediaMTX {'alive' if tcp_up else 'not responding on TCP'}). "
-                    f"Log output:\n{detail}"
-                    + (f"\n{hint}" if hint else ""),
-                    "ERROR",
-                )
-            self._kill_mediamtx()
-            self.state.status    = StreamStatus.ERROR
-            self.state.error_msg = f"MediaMTX timeout (:{cfg.port})"
-            return False
-        self._log(f"MediaMTX RTSP handler ready on :{cfg.port}")
+                self._log(f"Port {cfg.port} is free.")
+
+            # ── Write MediaMTX config ─────────────────────────────────────────────
+            self._log("Writing MediaMTX YAML config …")
+            try:
+                mtx_cfg = MediaMTXConfig.write(self.state)
+                self._log(f"MediaMTX config written: {mtx_cfg}")
+            except Exception as exc:
+                self.state.status    = StreamStatus.ERROR
+                self.state.error_msg = f"Failed to write MediaMTX config: {exc}"
+                self._log(self.state.error_msg, "ERROR")
+                return False
+
+            # ── Launch MediaMTX ───────────────────────────────────────────────────
+            if not self._start_mediamtx(mtx_cfg):
+                return False
+
+            # Wait for MediaMTX RTSP handler to be fully ready.
+            # _wait_for_port() only confirms TCP bind. On Windows, MediaMTX binds
+            # the port ~500-800 ms before its RTSP handler is initialised; ffmpeg
+            # connecting during that gap sends ANNOUNCE and gets 400 Bad Request.
+            # _wait_for_rtsp() sends a real RTSP OPTIONS and waits for 200 OK.
+            # Wait for MediaMTX RTSP handler to be fully ready.
+            # _wait_for_port() only confirms TCP bind. On Windows, MediaMTX binds
+            # the port ~500-800 ms before its RTSP handler is initialised; ffmpeg
+            # connecting during that gap sends ANNOUNCE and gets 400 Bad Request.
+            # _wait_for_rtsp() sends a real RTSP OPTIONS and waits for a response.
+            self._log(f"Waiting for MediaMTX RTSP handler :{cfg.port} (timeout {self.MTX_READY_TIMEOUT:.0f}s) ...")
+            _push_path = cfg.rtsp_path if cfg.rtsp_path else "stream"
+            mtx_proc   = self.state.mtx_proc
+
+            def _mtx_alive() -> bool:
+                return mtx_proc is not None and mtx_proc.poll() is None
+
+            if not _wait_for_rtsp(cfg.port, timeout=self.MTX_READY_TIMEOUT,
+                                   path=_push_path, check_alive=_mtx_alive):
+                # Determine if MediaMTX crashed (process dead) or just didn't respond.
+                proc_dead  = mtx_proc is not None and mtx_proc.poll() is not None
+                crash_f    = getattr(mtx_proc, "_crash_f", None) if mtx_proc else None
+                log_tail   = _tail_log(LOGS_DIR() / f"mediamtx_{cfg.port}.log", 12)
+                crash_tail = _tail_log(crash_f, 20) if crash_f else ""
+                detail     = crash_tail or log_tail or "No output in MediaMTX log file"
+
+                if proc_dead:
+                    exit_code = mtx_proc.returncode
+                    self._log(
+                        f"MediaMTX crashed during RTSP readiness probe "
+                        f"(exit code {exit_code}). "
+                        f"Log/crash output:\n{detail}\n"
+                        f"HINT: Run '{MEDIAMTX_BIN()} {mtx_cfg}' in a terminal "
+                        "to see the full error.",
+                        "ERROR",
+                    )
+                else:
+                    tcp_up = _port_in_use(cfg.port)
+                    hint = (
+                        "HINT: Windows Firewall or Antivirus may be intercepting "
+                        "RTSP on loopback (127.0.0.1). Try temporarily disabling "
+                        "real-time protection or adding a firewall exception for "
+                        f"TCP :{cfg.port}."
+                        if IS_WIN and tcp_up else
+                        f"HINT: MediaMTX TCP port {cfg.port} is NOT bound — "
+                        "the process may have crashed after the stability check."
+                        if not tcp_up else ""
+                    )
+                    self._log(
+                        f"MediaMTX RTSP-ready timeout :{cfg.port} after "
+                        f"{self.MTX_READY_TIMEOUT:.0f}s "
+                        f"(MediaMTX {'alive' if tcp_up else 'not responding on TCP'}). "
+                        f"Log output:\n{detail}"
+                        + (f"\n{hint}" if hint else ""),
+                        "ERROR",
+                    )
+                self._kill_mediamtx()
+                self.state.status    = StreamStatus.ERROR
+                self.state.error_msg = f"MediaMTX timeout (:{cfg.port})"
+                return False
+            self._log(f"MediaMTX RTSP handler ready on :{cfg.port}")
+            # MediaMTX has bound its ports and is serving RTSP — release the
+            # semaphore so the next queued stream can begin its port-check + launch.
+        finally:
+            if _sem_acq_do:
+                _RECONNECT_SEM.release()
 
         # ── Launch FFmpeg ─────────────────────────────────────────────────────
         if not self._start_ffmpeg_with_retry(item, seek_pos):
