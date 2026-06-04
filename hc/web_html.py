@@ -4124,8 +4124,8 @@ function showNewStreamForm(){
     <div class="config-section">
       <div class="config-section-title">Encoding</div>
       <div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(180px,1fr))">
-        <div class="fg"><label>Video Bitrate</label><input id="new-vbr" value="2500k"></div>
-        <div class="fg"><label>Audio Bitrate</label><input id="new-abr" value="128k"></div>
+        <div class="fg"><label>Video Bitrate</label><input id="new-vbr" value="8000k"></div>
+        <div class="fg"><label>Audio Bitrate</label><input id="new-abr" value="320k"></div>
       </div>
     </div>
     <div class="config-section">
@@ -4446,8 +4446,8 @@ async function submitNewStream(){
     name,port,files,weekdays,
     folder_source: folderPath||null,
     stream_path:(document.getElementById('new-spath')?.value||'').trim(),
-    video_bitrate:(document.getElementById('new-vbr')?.value||'2500k').trim()||'2500k',
-    audio_bitrate:(document.getElementById('new-abr')?.value||'128k').trim()||'128k',
+    video_bitrate:(document.getElementById('new-vbr')?.value||'8000k').trim()||'8000k',
+    audio_bitrate:(document.getElementById('new-abr')?.value||'320k').trim()||'320k',
     shuffle:document.getElementById('new-shuffle')?.checked||false,
     enabled:document.getElementById('new-enabled')?.checked!==false,
     hls_enabled:document.getElementById('new-hls')?.checked||false,
