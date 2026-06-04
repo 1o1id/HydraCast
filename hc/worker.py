@@ -1,6 +1,26 @@
 """
 hc/worker.py  —  LogBuffer, media probe helpers, and StreamWorker.
 
+FIXES (v5.3.3):
+  • _monitor() same-file loop path: replaced flat time.sleep(1.5) with a
+    per-stream jittered sleep of 1.5 s + (port % 20) × 0.15 s (range
+    1.5–4.35 s).
+
+    Root cause: when 20+ compliance streams all reach their 24-hour file
+    boundary at the same wall-clock second, the flat 1.5 s settle sleep
+    causes every stream's FFmpeg to attempt its MediaMTX reconnect in a
+    single synchronized burst.  Each reconnect attempt collides with the
+    previous stream's session teardown: MediaMTX accepts the RTSP ANNOUNCE
+    but closes the write channel immediately → FFmpeg gets broken-pipe →
+    2-second retry backoff → next attempt collides again.  All 6 retries
+    fail and the stream falls through to _auto_restart(), which then
+    triggers a second storm of MediaMTX kill+restart cycles.
+
+    The jitter spreads 20 streams across a ~2.85 s window (each slot ~143 ms)
+    so each MediaMTX has exclusive settle time before the next FFmpeg connects.
+    This is structurally identical to the _auto_restart() jitter added in
+    v5.3.2, applied one level earlier (before the retry loop, not after it).
+
 FIXES (v5.3.2):
   • _auto_restart(): added per-stream jitter derived from (port % 20) × 0.2 s
     (range 0.0–3.8 s, capped at half the backoff delay).  Without jitter,
@@ -2000,15 +2020,28 @@ class StreamWorker:
                         "Same-file loop — skipping MediaMTX cycle "
                         "(codec parameters unchanged)."
                     )
-                    # Brief settle: give MediaMTX ~1.5 s to release the previous
+                    # Brief settle: give MediaMTX time to release the previous
                     # publisher session before FFmpeg reconnects.  Without this,
                     # the new FFmpeg ANNOUNCE races the session teardown and gets
-                    # EPIPE (broken-pipe) on attempt 1 every single loop, causing
-                    # a noisy WRN log and an unnecessary 2-second retry stall.
-                    # 1.5 s is short enough to be imperceptible to viewers yet
-                    # long enough for MediaMTX to flush its buffers on a loaded
-                    # Windows host with 20+ simultaneous streams.
-                    time.sleep(1.5)
+                    # EPIPE (broken-pipe) on attempt 1 every single loop.
+                    #
+                    # Per-stream jitter: when 20+ compliance streams all hit
+                    # their 24-hour boundary at the same second, a flat 1.5 s
+                    # sleep makes every stream attempt its reconnect in a
+                    # single synchronized burst — each FFmpeg connect collides
+                    # with the next stream's MediaMTX teardown, producing a
+                    # cascade of broken-pipe retries that exhaust all 6 attempts
+                    # and spill into _auto_restart().
+                    #
+                    # Jitter = (port mod 20) × 0.15 s → 0.0–2.85 s spread.
+                    # Total settle = 1.5 s base + jitter → 1.5–4.35 s window.
+                    # This gives each MediaMTX ~150–200 ms of exclusive settle
+                    # time before the next stream's FFmpeg connects, which is
+                    # sufficient for session teardown on a loaded Windows host.
+                    # The base 1.5 s is preserved so low-numbered ports (jitter≈0)
+                    # still have the same protection as before.
+                    _loop_jitter = (self.state.config.port % 20) * 0.15
+                    time.sleep(1.5 + _loop_jitter)
                     if not self._start_ffmpeg_with_retry(next_item, spos):
                         self._log(
                             "Same-file loop: FFmpeg failed to connect after all "
