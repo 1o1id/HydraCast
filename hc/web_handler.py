@@ -563,6 +563,7 @@ class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandl
             "/api/urls_csv":               lambda: self._get_urls_csv(qs),
             "/api/mail_config":              self._get_mail_config,
             "/api/upload/status":            lambda: self._get_upload_status(qs),
+            "/api/cameras":                  self._get_cameras,
         }
 
         handler = routes.get(path)
