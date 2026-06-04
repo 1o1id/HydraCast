@@ -3814,7 +3814,52 @@ function _attachDirtyListeners(){
   });
 }
 
-// ── Playlist editor helpers ──────────────────────────────────────────────────
+// ── Weekday-aware playlist sort ──────────────────────────────────────────────
+// Day-tag detection: matches _MON_, _TUE_, _WED_, _THU_, _FRI_, _SAT_, _SUN_
+// (case-insensitive) anywhere in the file name or path.
+const _DAY_TAG_RE = /_(MON|TUE|WED|THU|FRI|SAT|SUN)_/i;
+const _DAY_TAG_IDX = {MON:0,TUE:1,WED:2,THU:3,FRI:4,SAT:5,SUN:6};
+
+function _dayDistance(path){
+  // Days forward from today until the file's tagged weekday.
+  // Returns 7 for same-weekday-as-today (plays last in cycle),
+  // and 14 for untagged files (always trails all tagged files).
+  const m = _DAY_TAG_RE.exec((path||'').replace(/\\/g,'/').split('/').pop()||'');
+  if(!m) return 14;
+  const fileDay = _DAY_TAG_IDX[m[1].toUpperCase()];
+  const today   = new Date().getDay(); // 0=Sun…6=Sat  → convert to Mon-based
+  const todayMon = (today + 6) % 7;   // 0=Mon…6=Sun
+  const dist = (fileDay - todayMon + 7) % 7;
+  return dist > 0 ? dist : 7;         // 0 = same day → send to end
+}
+
+function _plSortWeekdayOrPriority(){
+  // If at least one item has a day-tag, sort the whole list by weekday distance.
+  // Otherwise fall back to priority sort (standard manual-playlist behaviour).
+  const hasDayTags = _playlistItems.some(it => _DAY_TAG_RE.test(
+    (it.path||'').replace(/\\/g,'/').split('/').pop()||''));
+  if(hasDayTags){
+    _playlistItems.sort((a,b)=>{
+      const da=_dayDistance(a.path), db=_dayDistance(b.path);
+      if(da!==db) return da-db;
+      return (a.priority||0)-(b.priority||0); // tiebreak by priority
+    });
+  }else{
+    _playlistItems.sort((a,b)=>(a.priority||0)-(b.priority||0));
+  }
+}
+
+function renderPlaylistEditor(cid,raw){
+  _playlistItems=_parsePL(raw);
+  // Sort by weekday order when day-tagged files are present (e.g. _MON_, _TUE_…).
+  // For such playlists the priority field is 0 for all items (folder-source
+  // streams do not use manual priorities), so a plain priority sort would leave
+  // them in raw string order — which for a folder source may be alphabetical
+  // (_FRI_ first) rather than the correct broadcast week sequence (today first).
+  // When NO day tags are detected fall back to the standard priority sort.
+  _plSortWeekdayOrPriority();
+  _renderPLTable(cid);
+}
 function _parsePL(raw){
   const items=[];
   for(let part of (raw||'').split(/[;\n]+/)){
@@ -3852,21 +3897,41 @@ function _plGetStr(cid){
   });
   return _plToStr(_playlistItems);
 }
-function renderPlaylistEditor(cid,raw){
-  _playlistItems=_parsePL(raw);
-  _playlistItems.sort((a,b)=>a.priority-b.priority);
-  _renderPLTable(cid);
-}
 function _renderPLTable(cid){
   const wrap=document.getElementById(cid);if(!wrap)return;
+  const hasDayTags=_playlistItems.some(it=>_DAY_TAG_RE.test(
+    (it.path||'').replace(/\\/g,'/').split('/').pop()||''));
+
+  // Day-of-week short names for the badge, aligned with _DAY_TAG_IDX (Mon=0)
+  const _DAY_LABELS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const _todayMon=(new Date().getDay()+6)%7; // 0=Mon…6=Sun
+
   const rows=_playlistItems.map((item,i)=>{
     const ch=_plChannel(item.path);
     const fname=(item.path||'').replace(/\\/g,'/').split('/').pop()||item.path;
+    // Detect weekday tag from filename for the Day column badge
+    const dayMatch=_DAY_TAG_RE.exec(fname);
+    const dayIdx=dayMatch?_DAY_TAG_IDX[dayMatch[1].toUpperCase()]:null;
+    const isToday=dayIdx!==null&&dayIdx===_todayMon;
+    const dayBadge=hasDayTags?(
+      dayIdx!==null
+        ?'<span style="display:inline-block;font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;'
+            +(isToday
+              ?'background:var(--green-dim);color:var(--green);border:1px solid rgba(107,142,107,0.4)'
+              :'background:var(--bg4);color:var(--text2);border:1px solid var(--border)')
+            +'">'+_DAY_LABELS[dayIdx]+(isToday?' ★':'')+'</span>'
+        :'<span style="font-size:10px;color:var(--text3)">—</span>'
+    ):'';
+
     return '<tr>'
       +'<td style="width:82px;text-align:center;vertical-align:top;padding-top:8px">'
-        +_plPriBadge(item.priority)
-        +'<div style="margin-top:4px"><input type="number" value="'+item.priority+'" min="0" max="999"'
-        +' oninput="_plUpd('+i+',&apos;p&apos;,this.value)" style="width:54px;text-align:center"></div>'
+        +(hasDayTags
+          ?(dayBadge+'<div style="margin-top:4px;font-size:9px;color:var(--text3)">'
+            +(isToday?'TODAY':(dayIdx!==null?'+'+((_DAY_TAG_IDX[dayMatch[1].toUpperCase()]-_todayMon+7)%7||7)+'d':''))
+            +'</div>')
+          :(_plPriBadge(item.priority)
+            +'<div style="margin-top:4px"><input type="number" value="'+item.priority+'" min="0" max="999"'
+            +' oninput="_plUpd('+i+',&apos;p&apos;,this.value)" style="width:54px;text-align:center"></div>'))
       +'</td>'
       +'<td style="width:100px">'+(ch?'<span class="pl-channel-tag">'+esc(ch)+'</span>':'<span style="color:var(--text3);font-size:10px">—</span>')+'</td>'
       +'<td><div class="pl-path" title="'+esc(item.path)+'" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px">'+esc(fname)+'</div>'
@@ -3878,20 +3943,26 @@ function _renderPLTable(cid){
       +'</tr>';
   }).join('');
 
+  const sortBtnLabel=hasDayTags
+    ?'<i class="fa fa-calendar-week" style="margin-right:4px"></i>Sort by Weekday'
+    :'<i class="fa fa-sort-numeric-up" style="margin-right:4px"></i>Sort by Priority';
+  const priorityHeader=hasDayTags?'Day':'Priority';
+
   wrap.innerHTML=
     '<div class="pl-editor">'
       +'<div class="pl-toolbar">'
         +'<span class="pl-toolbar-label"><i class="fa fa-list-ol" style="margin-right:5px;opacity:0.65"></i>'
         +_playlistItems.length+' file'+(_playlistItems.length!==1?'s':'')+'</span>'
-        +'<button class="btn b" style="padding:3px 10px;font-size:10px" title="Sort files by priority (highest first)" onclick="_plSort(&apos;'+cid+'&apos;)">'
-          +'<i class="fa fa-sort-numeric-up" style="margin-right:4px"></i>Sort by Priority</button>'
+        +'<button class="btn b" style="padding:3px 10px;font-size:10px" title="'
+          +(hasDayTags?'Sort files by weekday (today first)':'Sort files by priority (highest first)')
+          +'" onclick="_plSort(&apos;'+cid+'&apos;)">'+sortBtnLabel+'</button>'
         +'<button class="btn" style="padding:3px 10px;font-size:10px" title="View or edit the raw playlist text" onclick="_plRawView(&apos;'+cid+'&apos;)">'
           +'<i class="fa fa-code" style="margin-right:4px"></i>Raw</button>'
       +'</div>'
       +(_playlistItems.length>0
         ?'<div style="overflow-x:auto"><table class="pl-table">'
           +'<thead><tr>'
-            +'<th style="width:82px;text-align:center">Priority</th>'
+            +'<th style="width:82px;text-align:center">'+priorityHeader+'</th>'
             +'<th style="width:100px">Channel</th>'
             +'<th>File</th>'
             +'<th style="width:106px">Start At</th>'
@@ -3929,7 +4000,7 @@ function _plSort(cid){
     if(pi&&_playlistItems[i])_playlistItems[i].priority=parseInt(pi.value)||0;
     if(si&&_playlistItems[i])_playlistItems[i].start=si.value||'00:00:00';
   });
-  _playlistItems.sort((a,b)=>a.priority-b.priority);
+  _plSortWeekdayOrPriority();
   _renderPLTable(cid);
 }
 function _plAdd(cid){
@@ -3937,7 +4008,7 @@ function _plAdd(cid){
   const raw=inp.value.trim();if(!raw){toast('Enter a file path','err');return;}
   const parsed=_parsePL(raw);if(!parsed.length){toast('Invalid path','err');return;}
   _playlistItems.push(...parsed);
-  _playlistItems.sort((a,b)=>a.priority-b.priority);
+  _plSortWeekdayOrPriority();
   inp.value='';_markDirty();_renderPLTable(cid);
 }
 function _plRawView(cid){
@@ -3967,7 +4038,7 @@ function _plRawView(cid){
 }
 function _plTableView(cid){
   const ta=document.querySelector('#'+cid+' textarea');
-  if(ta){_playlistItems=_parsePL(ta.value);_playlistItems.sort((a,b)=>a.priority-b.priority);_markDirty();}
+  if(ta){_playlistItems=_parsePL(ta.value);_plSortWeekdayOrPriority();_markDirty();}
   _renderPLTable(cid);
 }
 
@@ -4495,7 +4566,7 @@ function _plAddPath(cid, path) {
     if(si&&_playlistItems[i])_playlistItems[i].start=si.value||'00:00:00';
   });
   _playlistItems.push({path, start:'00:00:00', priority:0});
-  _playlistItems.sort((a,b)=>a.priority-b.priority);
+  _plSortWeekdayOrPriority();
   _markDirty();
   _renderPLTable(cid);
 }
