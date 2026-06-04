@@ -1,6 +1,20 @@
 """
 hc/manager.py  —  StreamManager: orchestrates workers, scheduler, event loop.
 
+v6.2 changes
+─────────────
+• start_stream() gains a `fresh_start` parameter (default False).
+  Only a fresh_start=True call resets playlist_index/order to 0 — manual
+  Start button, start_all(), and event-loop auto-starts pass True.
+  Scheduler loop restarts (start_stream called because stream stopped
+  unexpectedly) and _auto_restart() in worker.py pass the default False
+  so playlist sequencing is preserved across restarts.
+
+• start_all() staggers stream launches in groups of 4 with a 400 ms pause
+  between groups so that 20+ simultaneous MediaMTX processes don't race for
+  UDP RTP/RTCP port release, eliminating the
+  "bind: Only one usage of each socket address" cascade on server restart.
+
 v6.1 changes (compliance v2)
 ─────────────────────────────
 • _event_loop: after firing a one-shot event the loop watches for its
@@ -64,7 +78,7 @@ class StreamManager:
     def start(self, name: str) -> None:
         st = self.get_state(name)
         if st:
-            self.start_stream(st)
+            self.start_stream(st, fresh_start=True)
 
     def stop(self, name: str) -> None:
         st = self.get_state(name)
@@ -77,7 +91,7 @@ class StreamManager:
             self.restart_stream(st)
 
     # ── State-based control API (used internally / TUI) ───────────────────────
-    def start_stream(self, state: StreamState) -> None:
+    def start_stream(self, state: StreamState, fresh_start: bool = False) -> None:
         if state.status in (StreamStatus.LIVE, StreamStatus.STARTING, StreamStatus.ONESHOT):
             return
         # Block while _after() owns the resume cycle.  state.resuming is set
@@ -88,8 +102,14 @@ class StreamManager:
         # calls start_stream(), which races _cycle_mediamtx and corrupts ports.
         if state.resuming:
             return
-        state.playlist_index = 0
-        state.playlist_order = []
+        # Only reset playlist position on an explicit fresh start (e.g. manual
+        # Start button press, first launch).  Auto-restarts triggered by the
+        # scheduler, _auto_restart(), or a broken-pipe loop must NOT reset to
+        # index 0 — that breaks multi-file playlist sequencing by always
+        # replaying the first file instead of continuing from where we left off.
+        if fresh_start:
+            state.playlist_index = 0
+            state.playlist_order = []
         # Clear any stale initial_offset from a previous compliance start —
         # _apply_compliance_start() below will set it correctly if needed.
         state.initial_offset = 0.0
@@ -132,11 +152,18 @@ class StreamManager:
                              name=f"skip-{state.config.port}").start()
 
     def start_all(self) -> None:
-        for s in self.states:
+        for i, s in enumerate(self.states):
             if not s.config.enabled:
                 s.status = StreamStatus.DISABLED
             elif s.config.is_scheduled_today():
-                self.start_stream(s)
+                self.start_stream(s, fresh_start=True)
+                # Stagger launches: pause every 4 streams so the OS has time
+                # to release UDP RTP/RTCP sockets from any prior MediaMTX
+                # instances.  Without this, 20+ simultaneous launches race for
+                # the same UDP ports and several streams fail with
+                # "bind: Only one usage of each socket address".
+                if (i + 1) % 4 == 0:
+                    time.sleep(0.4)
             else:
                 if s.config.folder_source:
                     self._fw_registry.register(s)
