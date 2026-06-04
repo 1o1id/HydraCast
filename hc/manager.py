@@ -1,6 +1,14 @@
 """
 hc/manager.py  —  StreamManager: orchestrates workers, scheduler, event loop.
 
+v6.3 changes
+─────────────
+• start_all() stagger changed from "groups of 4 × 400 ms" to a true
+  per-stream 2-second gap.  Each stream thread is spawned 2 s after the
+  previous one, so the UI shows streams coming up one-by-one rather than
+  in bursts.  The hard port-binding serialisation is still handled by the
+  _RECONNECT_SEM in worker.py; this delay is purely the visible stagger.
+
 v6.2 changes
 ─────────────
 • start_stream() gains a `fresh_start` parameter (default False).
@@ -11,9 +19,7 @@ v6.2 changes
   so playlist sequencing is preserved across restarts.
 
 • start_all() staggers stream launches in groups of 4 with a 400 ms pause
-  between groups so that 20+ simultaneous MediaMTX processes don't race for
-  UDP RTP/RTCP port release, eliminating the
-  "bind: Only one usage of each socket address" cascade on server restart.
+  between groups (superseded in v6.3 — see above).
 
 v6.1 changes (compliance v2)
 ─────────────────────────────
@@ -162,18 +168,33 @@ class StreamManager:
                              name=f"skip-{state.config.port}").start()
 
     def start_all(self) -> None:
+        # ── Staggered launch (v6.3) ───────────────────────────────────────────
+        # Each stream is started with a 2-second gap between launches.
+        #
+        # Why 2 s per stream (not the old 4-streams-then-400 ms group model):
+        #   • The slow-preset encoder is more CPU-intensive than ultrafast; the
+        #     OS needs a bit more time for each MediaMTX + FFmpeg pair to settle.
+        #   • The _do_start() boot-jitter (port % 20 × 0.25 s, up to 4 s) and
+        #     the _RECONNECT_SEM (limit 4 concurrent launches) already handle the
+        #     hard port-binding serialisation.  This outer delay is simply a
+        #     human-visible "one stream at a time" stagger so the UI shows
+        #     streams coming up gradually rather than all at once.
+        #   • 2 s × 22 streams = 44 s total, well within the scheduler's 70 s
+        #     initial delay before it starts watching for stopped streams.
+        #
+        # start_stream() spawns a daemon thread, so the sleep here does NOT
+        # block the thread that already started — it only spaces out when each
+        # new thread is born.
         for i, s in enumerate(self.states):
             if not s.config.enabled:
                 s.status = StreamStatus.DISABLED
             elif s.config.is_scheduled_today():
                 self.start_stream(s, fresh_start=True)
-                # Stagger launches: pause every 4 streams so the OS has time
-                # to release UDP RTP/RTCP sockets from any prior MediaMTX
-                # instances.  Without this, 20+ simultaneous launches race for
-                # the same UDP ports and several streams fail with
-                # "bind: Only one usage of each socket address".
-                if (i + 1) % 4 == 0:
-                    time.sleep(0.4)
+                # 2 s between each stream start so launches are clearly
+                # sequential.  The semaphore in _do_start() handles the hard
+                # port-binding cap; this delay is the visible stagger.
+                if i < len(self.states) - 1:
+                    time.sleep(2.0)
             else:
                 if s.config.folder_source:
                     self._fw_registry.register(s)
