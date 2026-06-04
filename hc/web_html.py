@@ -5612,7 +5612,7 @@ async function saveCameraForm(){
         payload.password = pwdField?.value||'';
       }
     }
-    const action = _camEditId ? 'camera_edit' : 'camera_add';
+    const action = _camEditId ? 'edit_camera' : 'add_camera';
     const r = await fetch('/api',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -5636,7 +5636,7 @@ async function deleteCamera(camera_id, name){
     const r = await fetch('/api',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({action:'camera_delete',camera_id})
+      body:JSON.stringify({action:'delete_camera',camera_id})
     }).then(r=>r.json());
     toast(r.msg||(r.ok?'Camera deleted':'Delete failed'),r.ok?'ok':'err');
     if(r.ok) loadCameras();
