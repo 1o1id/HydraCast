@@ -1,6 +1,32 @@
 """
 hc/worker.py  —  LogBuffer, media probe helpers, and StreamWorker.
 
+FIXES (v5.3.6):
+  • _monitor() same-file loop path: broken-pipe exits now always run
+    _cycle_mediamtx(), bypassing the skip-cycle optimisation.
+
+    Root cause: the same-file optimisation was designed for a world where
+    broken-pipe meant "FFmpeg finished a -stream_loop -1 file and MediaMTX
+    cooperatively terminated the session" — a predictable, clean close.
+    In practice, broken-pipe also occurs when MediaMTX unilaterally closes
+    the RTSP connection mid-stream (write timeout, resource pressure, or
+    any other server-side event).  In that case the publisher session is
+    in an unknown dirty state.  Skipping _cycle_mediamtx() and attempting
+    _start_ffmpeg_with_retry directly produces EPIPE on every retry attempt
+    because MediaMTX's internal path state still shows an active publisher.
+    The retry budget (~36 s across 6 attempts) is exhausted before the
+    flush completes, triggering the two-stage cycle (v5.3.5) or _auto_restart.
+
+    Fix: gate the same-file skip on `not _is_broken_pipe`.  A code-0 or
+    code-255 exit (natural file end) still skips the cycle — those exits are
+    genuinely clean and MediaMTX clears the session immediately.  A
+    broken-pipe exit always runs the cycle, clearing whatever state MediaMTX
+    was holding and giving FFmpeg a fresh session to push into.
+
+    New WARN log lines make the path taken visible:
+      "Same-file loop — broken-pipe exit; cycling MediaMTX to clear
+       forced-close session."
+
 FIXES (v5.3.5):
   • _monitor() same-file loop path: added two-stage recovery when
     _start_ffmpeg_with_retry() exhausts all retries despite MediaMTX
@@ -2061,7 +2087,7 @@ class StreamWorker:
                     self.state.mtx_proc is not None
                     and self.state.mtx_proc.poll() is None
                 )
-                if _same_file and _mtx_alive:
+                if _same_file and _mtx_alive and not _is_broken_pipe:
                     self._log(
                         "Same-file loop — skipping MediaMTX cycle "
                         "(codec parameters unchanged)."
@@ -2125,11 +2151,25 @@ class StreamWorker:
                         self._auto_restart()
                         return
                 else:
-                    # File changed OR MediaMTX died: cycle to restore a clean state.
+                    # Cycle MediaMTX when any of these is true:
+                    # (a) File changed — new codec params need a fresh session.
+                    # (b) MediaMTX died — liveness check failed (v5.3.4).
+                    # (c) Broken-pipe exit — MediaMTX forcibly closed the RTSP
+                    #     connection mid-stream (v5.3.6).  The session is in an
+                    #     unknown dirty state; attempting to reconnect without
+                    #     cycling causes EPIPE on every retry.  Killing and
+                    #     restarting MediaMTX atomically clears the stale session
+                    #     regardless of how long a buffer flush was taking.
                     if _same_file and not _mtx_alive:
                         self._log(
                             "Same-file loop — MediaMTX is not running; "
                             "cycling to restore it before reconnecting.",
+                            "WARN",
+                        )
+                    elif _same_file and _is_broken_pipe:
+                        self._log(
+                            "Same-file loop — broken-pipe exit; "
+                            "cycling MediaMTX to clear forced-close session.",
                             "WARN",
                         )
                     if not self._cycle_mediamtx():
