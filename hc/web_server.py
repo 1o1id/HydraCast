@@ -300,13 +300,13 @@ class WebServer:
         if not use_ssl and https_port == _PORT_HTTPS:
             https_port = _PORT_HTTP_FALLBACK
 
-        # Persist the real port so get_web_port() returns the correct value
-        # (matters when we fell back from 443 -> 8080, or when the caller
-        # passed a non-default port via --web-port).
+        # Persist the real port so get_web_port() returns the correct value.
+        # Critical when we fell back from 443 -> 8080: without this the tray
+        # opens http://host:443 instead of http://host:8080.
         set_web_port(https_port)
 
-        # Expose the SSL flag on the instance so hydracast_bg can probe
-        # with the right scheme without having to re-examine cert paths.
+        # Expose the SSL flag on the instance so the hydracast_bg probe can
+        # choose HTTPSConnection vs HTTPConnection without re-examining certs.
         self._use_ssl = use_ssl
 
         # ------------------------------------------------------------------
