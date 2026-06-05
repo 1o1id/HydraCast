@@ -445,46 +445,71 @@ def _run_hydracast_once(state: _WorkerState) -> bool:
 
             def _hooked_start():
                 result = _bound_start()
-                # Determine which port the web server is now listening on.
+                # ── Read the real port AFTER start() has called set_web_port() ──
+                # web_server.WebServer.start() now calls set_web_port(real_port)
+                # before returning, so get_web_port() is authoritative here.
                 try:
                     from hc.constants import get_web_port
                     state.port = get_web_port()
                 except Exception:
                     pass
-                # ── Wait until the socket is actually accepting connections ────
-                # WebServer.start() spawns a daemon thread and returns before
-                # serve_forever() is fully running.  Firing ready_event here
-                # immediately would cause the tray to open the browser before
-                # the socket's listen backlog is set up, producing
-                # ERR_EMPTY_RESPONSE on a fast machine.
-                # Probe 127.0.0.1:<port> with a real TCP connect (not just a
-                # port-open check) up to 10 s so we only signal ready once the
-                # kernel is actually queuing connections.
-                import socket as _sock
+
+                # ── Read the SSL flag set by WebServer.start() ────────────────
+                # ws_self._use_ssl is set by the patched start() in web_server.py.
+                # Fall back to False (plain HTTP) if the attribute is absent so
+                # older builds don't break.
+                _use_ssl    = getattr(ws_self, "_use_ssl", False)
                 _probe_port = state.port
-                _deadline   = time.time() + 10.0
-                _signalled  = False
+                _scheme     = "https" if _use_ssl else "http"
+
+                # ── Wait until the server actually responds to an HTTP request ──
+                # WebServer.start() spawns a daemon thread and returns before
+                # serve_forever() is fully running.  A bare TCP connect would
+                # succeed immediately on an SSL server (the TCP layer opens) but
+                # the server then drops the connection waiting for a TLS
+                # ClientHello that never comes — so the browser gets
+                # ERR_EMPTY_RESPONSE.  Instead we send a real HTTP GET to
+                # /api/health (which WebHandler serves in <1 ms) and only signal
+                # ready once we receive any HTTP response (any status code counts;
+                # a 503 "manager not ready yet" is still proof the socket works).
+                import http.client as _http
+                import ssl as _ssl_mod
+                _deadline  = time.time() + 15.0
+                _signalled = False
                 while time.time() < _deadline:
                     if state.shutdown_event.is_set():
                         break
                     try:
-                        with _sock.create_connection(
-                            ("127.0.0.1", _probe_port), timeout=0.5
-                        ):
-                            pass
+                        if _use_ssl:
+                            _ctx = _ssl_mod.SSLContext(_ssl_mod.PROTOCOL_TLS_CLIENT)
+                            _ctx.check_hostname = False
+                            _ctx.verify_mode    = _ssl_mod.CERT_NONE
+                            conn = _http.HTTPSConnection(
+                                "127.0.0.1", _probe_port,
+                                timeout=1.0, context=_ctx,
+                            )
+                        else:
+                            conn = _http.HTTPConnection(
+                                "127.0.0.1", _probe_port, timeout=1.0
+                            )
+                        conn.request("GET", "/api/health")
+                        resp = conn.getresponse()
+                        resp.read()   # drain so the connection closes cleanly
+                        conn.close()
                         log.info(
-                            "WebServer port %d confirmed accepting connections — "
-                            "signalling ready.", _probe_port
+                            "WebServer %s://127.0.0.1:%d responded HTTP %d — "
+                            "signalling ready.", _scheme, _probe_port, resp.status
                         )
                         state.ready_event.set()
                         _signalled = True
                         break
-                    except OSError:
-                        time.sleep(0.1)
+                    except Exception:
+                        time.sleep(0.15)
                 if not _signalled:
                     log.warning(
-                        "WebServer on port %d did not become reachable within "
-                        "10 s — signalling ready anyway.", _probe_port
+                        "WebServer %s://127.0.0.1:%d did not respond within "
+                        "15 s — signalling ready anyway.",
+                        _scheme, _probe_port,
                     )
                     state.ready_event.set()
                 return result
