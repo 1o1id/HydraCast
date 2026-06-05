@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 import psutil
 
-from hc.constants import APP_VER, BASE_DIR, CONFIG_DIR, MEDIA_DIR, SUPPORTED_EXTS, get_web_port
+from hc.constants import APP_VER, BASE_DIR, CONFIG_DIR, MEDIA_DIR, SUPPORTED_EXTS, get_web_port, get_auto_start
 from hc.utils import _fmt_duration, _fmt_size, _local_ip
 
 log = logging.getLogger(__name__)
@@ -294,6 +294,7 @@ class _GetHandlersMixin:
                 "disk_total":   _fmt_size(disk.total),
                 "web_port":     get_web_port(),
                 "lan_ip":       _local_ip(),
+                "auto_start":   get_auto_start(),
             })
         except Exception as exc:
             self._json({"error": str(exc)}, 500)
