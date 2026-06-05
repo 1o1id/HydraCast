@@ -46,7 +46,92 @@ from pathlib import Path
 # ── Constants ─────────────────────────────────────────────────────────────────
 WORKER_TIMEOUT = 30.0      # seconds to wait for worker "ready" signal
 
-# ── Logging: always write to a file (no console in bg mode) ──────────────────
+# ── Logging: always write to a CSV file (no console in bg mode) ──────────────
+import csv as _csv
+import datetime as _datetime
+from logging.handlers import BaseRotatingHandler
+
+
+class _DailyCSVHandler(BaseRotatingHandler):
+    """
+    A logging handler that writes structured CSV log entries and rotates to a
+    new file each calendar day.
+
+    File naming: hydracast_bg_YYYY-MM-DD.csv
+    CSV columns : timestamp, level, thread, message
+    """
+
+    CSV_HEADER = ["timestamp", "level", "thread", "message"]
+
+    def __init__(self, log_dir: Path, encoding: str = "utf-8"):
+        self.log_dir = log_dir
+        self._current_date: str = ""
+        # Compute today's filename and open it.
+        filename = self._filename_for_today()
+        super().__init__(str(filename), mode="a", encoding=encoding, delay=False)
+        self._write_header_if_empty()
+
+    # ── Internal helpers ──────────────────────────────────────────────────────
+
+    def _filename_for_today(self) -> Path:
+        today = _datetime.date.today().isoformat()   # e.g. "2025-06-04"
+        self._current_date = today
+        return self.log_dir / f"hydracast_bg_{today}.csv"
+
+    def _write_header_if_empty(self) -> None:
+        """Write the CSV header row when the file is brand-new (zero bytes)."""
+        try:
+            if self.stream and self.stream.tell() == 0:
+                writer = _csv.writer(self.stream)
+                writer.writerow(self.CSV_HEADER)
+                self.stream.flush()
+        except Exception:
+            pass
+
+    # ── Rotation logic ────────────────────────────────────────────────────────
+
+    def shouldRollover(self, record) -> bool:  # type: ignore[override]
+        """Roll over when the calendar date has changed."""
+        return _datetime.date.today().isoformat() != self._current_date
+
+    def doRollover(self) -> None:
+        """Close the current file and open a fresh one for the new day."""
+        if self.stream:
+            try:
+                self.stream.flush()
+                self.stream.close()
+            except Exception:
+                pass
+            self.stream = None  # type: ignore[assignment]
+
+        new_path = self._filename_for_today()
+        self.baseFilename = str(new_path)
+        self.stream = self._open()
+        self._write_header_if_empty()
+
+    # ── Emit ─────────────────────────────────────────────────────────────────
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Format the record as a CSV row and write it."""
+        try:
+            if self.shouldRollover(record):
+                self.doRollover()
+            timestamp = _datetime.datetime.fromtimestamp(record.created).strftime(
+                "%Y-%m-%d %H:%M:%S.%f"
+            )[:-3]   # trim to milliseconds
+            row = [
+                timestamp,
+                record.levelname,
+                record.threadName,
+                self.format(record),
+            ]
+            writer = _csv.writer(self.stream)
+            writer.writerow(row)
+            self.stream.flush()
+        except Exception:
+            self.handleError(record)
+
+
 def _setup_logging(base: Path) -> None:
     appdata = os.environ.get("APPDATA")
     candidates = []
@@ -71,14 +156,20 @@ def _setup_logging(base: Path) -> None:
         log_dir = Path(tempfile.gettempdir()) / "HydraCast"
         log_dir.mkdir(parents=True, exist_ok=True)
 
-    log_file = log_dir / "hydracast_bg.log"
-    logging.basicConfig(
-        filename=str(log_file),
-        level=logging.DEBUG,
-        format="%(asctime)s  %(levelname)-7s  [%(threadName)s]  %(message)s",
-        encoding="utf-8",
-    )
+    # ── Attach the daily-rotating CSV handler ─────────────────────────────────
+    csv_handler = _DailyCSVHandler(log_dir, encoding="utf-8")
+    # Use a plain message format; timestamp/level/thread are separate CSV columns.
+    csv_handler.setFormatter(logging.Formatter("%(message)s"))
+    csv_handler.setLevel(logging.DEBUG)
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    root_logger.addHandler(csv_handler)
+
+    # ── Redirect stdout / stderr to today's CSV file ──────────────────────────
     try:
+        today = _datetime.date.today().isoformat()
+        log_file = log_dir / f"hydracast_bg_{today}.csv"
         _fh = open(log_file, "a", encoding="utf-8", errors="replace")
         sys.stdout = _fh
         sys.stderr = _fh
@@ -467,14 +558,17 @@ def _build_and_run_tray(state: _WorkerState) -> None:
         )
 
     def _open_log(icon, item):
+        import datetime as _dt
+        today = _dt.date.today().isoformat()
+        csv_name = f"hydracast_bg_{today}.csv"
         appdata = os.environ.get("APPDATA")
         log_path = None
         if appdata:
-            candidate = Path(appdata) / "HydraCast" / "logs" / "hydracast_bg.log"
+            candidate = Path(appdata) / "HydraCast" / "logs" / csv_name
             if candidate.exists():
                 log_path = candidate
         if log_path is None:
-            log_path = _exe_dir() / "logs" / "hydracast_bg.log"
+            log_path = _exe_dir() / "logs" / csv_name
         try:
             os.startfile(str(log_path))
         except Exception:
