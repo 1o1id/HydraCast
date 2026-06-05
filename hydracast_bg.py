@@ -330,18 +330,94 @@ def _run_hydracast_once(state: _WorkerState) -> bool:
 
     Returns True  → should be restarted (crash / non-fatal error).
     Returns False → clean exit or fatal error; do not restart automatically.
+
+    Background-mode TUI strategy
+    ─────────────────────────────
+    The original stub replaced run_tui_loop with a bare sleep loop.  That broke
+    everything: the real run_tui_loop is not just a display loop — it owns the
+    StreamManager lifecycle (start_all on launch, scheduler ticks, compliance
+    checks, auto-restart signals).  Replacing it meant streams were never
+    started, monitored, or recovered from errors.
+
+    Fix: inject a *headless-safe* wrapper that calls the REAL run_tui_loop with
+    a Rich Console whose output is directed to a null sink (force_terminal=True,
+    no_color=True).  KeyboardHandler gets no input in bg mode (no TTY attached)
+    so its readline thread simply blocks harmlessly; the shutdown_event drives
+    the clean exit as usual.  The restart_event is forwarded via a combined
+    stop-event so the TUI loop exits promptly on tray-menu restart requests.
     """
     _patch_signal_for_thread()
     try:
         import hc.tui as _tui_mod
 
-        def _headless_tui_loop(**kw):
-            log.info("Headless TUI loop — waiting for shutdown or restart signal.")
-            # Block until either shutdown or an explicit restart is requested.
-            while not state.shutdown_event.is_set():
-                if state.restart_event.is_set():
-                    return   # worker will be restarted by _run_hydracast_with_restarts
-                time.sleep(0.2)
+        _real_run_tui_loop = _tui_mod.run_tui_loop
+
+        def _headless_tui_loop(
+            *,
+            manager,
+            glog,
+            console,
+            shutdown_event: threading.Event,
+            export_urls_fn,
+            **kw,
+        ) -> None:
+            """
+            Drop-in replacement for run_tui_loop in background mode.
+
+            Runs the REAL TUI loop (which manages streams, scheduler, compliance,
+            auto-restart, etc.) but feeds it a headless Rich Console so Rich
+            never tries to render escape codes to a missing TTY.
+
+            Both shutdown_event and state.restart_event are watched; either one
+            causes the loop to exit cleanly.
+            """
+            import io
+            from rich.console import Console as _Console
+
+            # Null-sink console: Rich renders to a StringIO and discards output.
+            # force_terminal=True prevents Rich from disabling colour/markup
+            # detection which would raise errors on some Rich widgets.
+            # no_color=True prevents ANSI escape sequences polluting the log.
+            _sink = io.StringIO()
+            _headless_console = _Console(
+                file=_sink,
+                force_terminal=True,
+                no_color=True,
+                highlight=False,
+                markup=False,
+                width=120,
+            )
+
+            # Combined stop-event: fires when either full-shutdown OR tray-
+            # triggered restart is requested, so the TUI loop exits promptly
+            # in both cases.
+            _combined_stop = threading.Event()
+
+            def _watch_combined() -> None:
+                while not _combined_stop.is_set():
+                    if shutdown_event.is_set() or state.restart_event.is_set():
+                        _combined_stop.set()
+                        return
+                    time.sleep(0.1)
+
+            _watcher = threading.Thread(
+                target=_watch_combined, daemon=True, name="bg-tui-watcher"
+            )
+            _watcher.start()
+
+            log.info("BG-mode TUI loop starting (real run_tui_loop, headless console).")
+            try:
+                _real_run_tui_loop(
+                    manager=manager,
+                    glog=glog,
+                    console=_headless_console,
+                    shutdown_event=_combined_stop,
+                    export_urls_fn=export_urls_fn,
+                    **kw,
+                )
+            finally:
+                _combined_stop.set()   # unblock the watcher thread
+                log.info("BG-mode TUI loop exited.")
 
         _tui_mod.run_tui_loop = _headless_tui_loop
 
@@ -372,7 +448,10 @@ def _run_hydracast_once(state: _WorkerState) -> bool:
             import hydracast as _hc
             _hc.main()
         finally:
+            # Restore both patches so a tray-triggered restart gets
+            # a clean re-injection on the next _run_hydracast_once() call.
             _WS.__init__ = _real_init
+            _tui_mod.run_tui_loop = _real_run_tui_loop
 
     except SystemExit as exc:
         code = exc.code
