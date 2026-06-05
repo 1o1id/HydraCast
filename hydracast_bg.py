@@ -418,6 +418,20 @@ def _run_hydracast_once(state: _WorkerState) -> bool:
             finally:
                 _combined_stop.set()   # unblock the watcher thread
                 log.info("BG-mode TUI loop exited.")
+                # Explicit manager stop: manager.shutdown() calls stop_all()
+                # synchronously (up to 12 s wait).  This gives each worker's
+                # _kill_ffmpeg + _kill_mediamtx a chance to run in the calling
+                # thread context before the process exits, rather than relying
+                # on daemon threads that may be reaped prematurely.
+                try:
+                    from hc.web_handler import _WEB_MANAGER
+                    _mgr = _WEB_MANAGER
+                    if _mgr is not None:
+                        log.info("BG-mode: calling manager.shutdown() …")
+                        _mgr.shutdown()
+                        log.info("BG-mode: manager.shutdown() complete.")
+                except Exception as _exc:
+                    log.warning("BG-mode: manager.shutdown() error: %s", _exc)
 
         _tui_mod.run_tui_loop = _headless_tui_loop
 
@@ -431,25 +445,73 @@ def _run_hydracast_once(state: _WorkerState) -> bool:
 
             def _hooked_start():
                 result = _bound_start()
+                # Determine which port the web server is now listening on.
                 try:
                     from hc.constants import get_web_port
                     state.port = get_web_port()
                 except Exception:
                     pass
-                log.info("WebServer started on port %d — signalling ready.", state.port)
-                state.ready_event.set()
+                # ── Wait until the socket is actually accepting connections ────
+                # WebServer.start() spawns a daemon thread and returns before
+                # serve_forever() is fully running.  Firing ready_event here
+                # immediately would cause the tray to open the browser before
+                # the socket's listen backlog is set up, producing
+                # ERR_EMPTY_RESPONSE on a fast machine.
+                # Probe 127.0.0.1:<port> with a real TCP connect (not just a
+                # port-open check) up to 10 s so we only signal ready once the
+                # kernel is actually queuing connections.
+                import socket as _sock
+                _probe_port = state.port
+                _deadline   = time.time() + 10.0
+                _signalled  = False
+                while time.time() < _deadline:
+                    if state.shutdown_event.is_set():
+                        break
+                    try:
+                        with _sock.create_connection(
+                            ("127.0.0.1", _probe_port), timeout=0.5
+                        ):
+                            pass
+                        log.info(
+                            "WebServer port %d confirmed accepting connections — "
+                            "signalling ready.", _probe_port
+                        )
+                        state.ready_event.set()
+                        _signalled = True
+                        break
+                    except OSError:
+                        time.sleep(0.1)
+                if not _signalled:
+                    log.warning(
+                        "WebServer on port %d did not become reachable within "
+                        "10 s — signalling ready anyway.", _probe_port
+                    )
+                    state.ready_event.set()
                 return result
 
             ws_self.start = _hooked_start
 
         _WS.__init__ = _patched_init
 
+        # ── Suppress auto-start on first run ──────────────────────────────
+        # Streams are started by the user from the Web UI.  Patching
+        # StreamManager.start_all() to a no-op prevents the scheduler from
+        # launching every enabled stream automatically at boot.
+        import hc.manager as _mgr_mod
+        _real_start_all = _mgr_mod.StreamManager.start_all
+
+        def _no_autostart(self_mgr):
+            log.info("start_all() suppressed — user will start streams from Web UI.")
+
+        _mgr_mod.StreamManager.start_all = _no_autostart
+
         try:
             import hydracast as _hc
             _hc.main()
         finally:
-            # Restore both patches so a tray-triggered restart gets
+            # Restore ALL patches so a tray-triggered restart gets
             # a clean re-injection on the next _run_hydracast_once() call.
+            _mgr_mod.StreamManager.start_all = _real_start_all
             _WS.__init__ = _real_init
             _tui_mod.run_tui_loop = _real_run_tui_loop
 
@@ -697,6 +759,98 @@ def _build_and_run_tray(state: _WorkerState) -> None:
         log.exception("pystray icon.run() raised: %s", exc)
 
 
+
+# ── Orphan-process cleanup ─────────────────────────────────────────────────────
+
+def _force_kill_orphans() -> None:
+    """
+    Belt-and-suspenders sweep: kill any MediaMTX or FFmpeg processes that are
+    still children of the current process after a normal shutdown.
+
+    Why this is needed
+    ──────────────────
+    manager.stop_all() dispatches one daemon thread per stream (worker.stop()
+    → _kill_ffmpeg + _kill_mediamtx).  Those daemon threads are NOT joined
+    anywhere.  On a fast or clean exit path Python can reach sys.exit() before
+    those threads finish their proc.terminate() + proc.wait() calls, leaving
+    both MediaMTX and FFmpeg alive as orphans.
+
+    This function is called from main() AFTER worker.join(timeout=15) so the
+    normal stop paths have had their chance first.  The psutil sweep is a
+    last resort that is completely safe to run unconditionally.
+    """
+    try:
+        import psutil, signal as _sig, os as _os
+        current = psutil.Process()
+        children = current.children(recursive=True)
+        targets = [
+            p for p in children
+            if any(
+                name in p.name().lower()
+                for name in ("mediamtx", "ffmpeg")
+            )
+        ]
+        if not targets:
+            log.info("_force_kill_orphans: no surviving mediamtx/ffmpeg children.")
+            return
+        for p in targets:
+            try:
+                log.warning(
+                    "_force_kill_orphans: terminating %s PID=%d", p.name(), p.pid
+                )
+                p.terminate()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        # Give them 4 s to honour SIGTERM, then SIGKILL anything left.
+        _, still_alive = psutil.wait_procs(targets, timeout=4)
+        for p in still_alive:
+            try:
+                log.warning(
+                    "_force_kill_orphans: KILL %s PID=%d (did not terminate)",
+                    p.name(), p.pid,
+                )
+                p.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+    except ImportError:
+        # psutil not available — fall back to os.kill on the stored PIDs
+        # (best-effort; PIDs may have been reused by the OS)
+        log.warning("_force_kill_orphans: psutil not available, falling back to pid scan.")
+        _force_kill_orphans_fallback()
+    except Exception as exc:
+        log.warning("_force_kill_orphans error: %s", exc)
+
+
+def _force_kill_orphans_fallback() -> None:
+    """Fallback when psutil is absent: collect PIDs from the web manager."""
+    try:
+        from hc.web_handler import _WEB_MANAGER
+        mgr = _WEB_MANAGER
+        if not mgr:
+            return
+        import os as _os, subprocess as _sp
+        for st in mgr.states:
+            for proc_attr in ("ffmpeg_proc", "mtx_proc"):
+                proc = getattr(st, proc_attr, None)
+                if proc is None:
+                    continue
+                if proc.poll() is not None:
+                    continue   # already gone
+                try:
+                    log.warning(
+                        "_force_kill_orphans_fallback: killing %s PID=%d",
+                        proc_attr, proc.pid
+                    )
+                    proc.terminate()
+                    proc.wait(timeout=4)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+    except Exception as exc:
+        log.warning("_force_kill_orphans_fallback error: %s", exc)
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 def main() -> None:
     # ── Guardian mode (spawned by launch_guardian) ────────────────────────────
@@ -800,7 +954,13 @@ def main() -> None:
     log.info("Tray exited — signalling shutdown and waiting for worker …")
     state.shutdown_event.set()
     _heartbeat.stop()
+    # Give the worker (and its stop-stream daemon threads) up to 15 s to finish
+    # their normal proc.terminate() / proc.wait() cleanup.
     worker.join(timeout=15)
+    # Belt-and-suspenders: kill any MediaMTX or FFmpeg processes that are still
+    # alive after the normal shutdown path.  daemon stop-threads are not joined
+    # so they can outlive the worker join; this sweep ensures they don't.
+    _force_kill_orphans()
     log.info("hydracast_bg exiting cleanly.")
 
 
