@@ -450,6 +450,17 @@ class StreamManager:
                 active = s.status in (StreamStatus.LIVE, StreamStatus.STARTING)
                 if should and not active:
                     self._glog.add(f"[{s.config.name}] Scheduler: starting.", "INFO")
+                    # Reset the consecutive-failure counter so the scheduler's
+                    # recovery attempt gets a full auto-restart budget.  Without
+                    # this, a stream that burned through MAX_AUTO_RESTARTS during
+                    # a transient failure storm would refuse all future _auto_restart
+                    # calls even after the underlying problem had cleared.
+                    if s.status == StreamStatus.ERROR:
+                        s.restart_count = 0
+                        self._glog.add(
+                            f"[{s.config.name}] Scheduler: reset restart counter for ERROR stream.",
+                            "INFO",
+                        )
                     self.start_stream(s)
                 elif not should and active:
                     self._glog.add(f"[{s.config.name}] Scheduler: stopping.", "INFO")
