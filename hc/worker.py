@@ -2919,14 +2919,56 @@ class StreamWorker:
         if self._seeking.is_set():
             self._log("Auto-restart skipped: seek in progress.", "WARN")
             return
+
         n = self.state.restart_count
+
+        # ── MAX_AUTO_RESTARTS: consecutive-failure gate, not lifetime gate ────
+        # When n >= MAX_AUTO_RESTARTS the stream has failed 8 times IN A ROW
+        # without ever going LIVE.  At that point we apply the maximum backoff
+        # (120 s) and then reset the counter so the next cycle gets a fresh
+        # budget.  This prevents streams from permanently locking into ERROR
+        # after a transient burst of failures (port collision storm, MediaMTX
+        # crash, brief file-system hiccup, etc.).
+        #
+        # Why not give up permanently?
+        #   • In production, streams often fail in synchronized bursts (all 22
+        #     streams restart simultaneously at the 24-hour compliance boundary,
+        #     a Windows Defender scan delays MediaMTX startup, a brief network
+        #     outage clears) and then recover once the underlying condition clears.
+        #   • A permanently-stuck ERROR stream requires manual operator
+        #     intervention (Web UI "Clear Error" button or service restart).
+        #     With streaming services running 24/7 that is unacceptable.
+        #   • _do_start() resets restart_count to 0 the moment the stream goes
+        #     LIVE, so a successful recovery immediately gives back a full budget.
+        #
+        # Behaviour when n >= MAX_AUTO_RESTARTS:
+        #   • Log the burst-exhaustion at ERROR level (operator-visible).
+        #   • Sleep the maximum backoff (120 s) to avoid hammering a broken port.
+        #   • Reset restart_count to 0 so the next attempt starts fresh.
+        #   • Proceed into the normal restart path below.
         if n >= self.MAX_AUTO_RESTARTS:
             self._log(
-                f"Max auto-restarts ({self.MAX_AUTO_RESTARTS}) reached — "
-                "giving up. Check file paths, ports, and FFmpeg/MediaMTX logs.",
+                f"Auto-restart burst exhausted ({n} consecutive failures) — "
+                f"backing off {self.BACKOFF[-1]:.0f}s then resetting counter and retrying. "
+                "If this persists, check file paths, ports, and FFmpeg/MediaMTX logs.",
                 "ERROR",
             )
-            return
+            self.state.restarting = True  # type: ignore[attr-defined]
+            try:
+                for _ in range(int(self.BACKOFF[-1] * 10)):
+                    if self._stop.is_set() or self._seeking.is_set():
+                        self._log("Auto-restart (post-burst backoff) cancelled.")
+                        return
+                    time.sleep(0.1)
+            finally:
+                self.state.restarting = False  # type: ignore[attr-defined]
+            if self._stop.is_set() or self._seeking.is_set():
+                return
+            # Reset the consecutive-failure counter so the next run_tui_loop /
+            # scheduler / _monitor trigger gets a clean slate.
+            self.state.restart_count = 0
+            n = 0
+
         delay = self.BACKOFF[min(n, len(self.BACKOFF) - 1)]
 
         # Per-stream jitter: spread simultaneous auto-restarts across streams
