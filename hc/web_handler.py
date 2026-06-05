@@ -472,8 +472,10 @@ def _active_event_name(st, cfg, mgr) -> Optional[str]:
 # =============================================================================
 from hc.web_filemanager import _FileManagerMixin   # provides _get_files, _handle_file_op
 from hc.web_handlers_calendar import _CalendarHandlersMixin
+from hc.web_handlers_get import _GetHandlersMixin   # provides _get_cameras, _get_streams, etc.
+from hc.web_handlers_post import _PostHandlersMixin  # provides _dispatch and POST action handlers
 
-class WebHandler(_CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandler):
+class WebHandler(_GetHandlersMixin, _PostHandlersMixin, _CalendarHandlersMixin, _FileManagerMixin, BaseHTTPRequestHandler):
 
     def log_message(self, *args: Any) -> None:
         pass  # access logging is done in _send() via hc.web_access_log
