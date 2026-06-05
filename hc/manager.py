@@ -149,6 +149,19 @@ class StreamManager:
                              name=f"skip-{state.config.port}").start()
 
     def start_all(self) -> None:
+        from hc.constants import get_auto_start
+        if not get_auto_start():
+            log.info(
+                "start_all() skipped — auto-start is disabled (--no-auto-start). "
+                "Start streams manually from the Web UI."
+            )
+            # Still set DISABLED / SCHEDULED status so the UI shows the right state.
+            for s in self.states:
+                if not s.config.enabled:
+                    s.status = StreamStatus.DISABLED
+                else:
+                    s.status = StreamStatus.SCHEDULED
+            return
         # ── Staggered launch (v6.3) ───────────────────────────────────────────
         # Each stream is started with a 2-second gap between launches.
         #
@@ -449,6 +462,17 @@ class StreamManager:
                 should = s.config.is_scheduled_today()
                 active = s.status in (StreamStatus.LIVE, StreamStatus.STARTING)
                 if should and not active:
+                    from hc.constants import get_auto_start
+                    if not get_auto_start():
+                        # Auto-start disabled — leave the stream in SCHEDULED
+                        # state; don't touch it.  Only update status if it's
+                        # currently something other than SCHEDULED/STOPPED.
+                        if s.status not in (
+                            StreamStatus.SCHEDULED, StreamStatus.STOPPED,
+                            StreamStatus.ERROR,    StreamStatus.DISABLED,
+                        ):
+                            s.status = StreamStatus.SCHEDULED
+                        continue
                     self._glog.add(f"[{s.config.name}] Scheduler: starting.", "INFO")
                     # Reset the consecutive-failure counter so the scheduler's
                     # recovery attempt gets a full auto-restart budget.  Without
